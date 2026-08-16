@@ -1,0 +1,140 @@
+experiment_name: twitter2015_evidence_multipath
+seed: 42
+device: auto
+output_dir: outputs/twitter2015
+
+data:
+  dataset_name: twitter2015
+  train_file: data/twitter2015/train.json
+  dev_file: data/twitter2015/dev.json
+  test_file: data/twitter2015/test.json
+  image_dir: data/twitter2015/images
+  image_extensions: [".jpg", ".jpeg", ".png", ".webp"]
+  strict_text_evidence_match: true
+  max_text_length: 128
+  max_target_length: 32
+  max_aux_text_length: 96
+  max_bridge_length: 160
+
+model:
+  text_backbone: google-t5/t5-large
+  # Pinned Hugging Face revisions make server runs reproducible.
+  text_backbone_revision: 150ebc2
+  vision_backbone: openai/clip-vit-large-patch14
+  vision_backbone_revision: 32bd642
+  # Set true after the pinned artifacts have been cached on an offline server.
+  local_files_only: false
+  hidden_dim: 512
+  bridge_encoder_dim: 512
+  num_heads: 8
+  dropout: 0.1
+  interaction_layers: 1
+  bridge_encoder_layers: 2
+  bridge_min_tokens_per_field: 2
+  text_gradient_checkpointing: true
+  vision_gradient_checkpointing: true
+  router_epsilon: 0.20
+  router_alpha_explicit: 1.0
+  router_alpha_implicit: 1.0
+  router_alpha_cross: 1.0
+
+training:
+  num_workers: 4
+  persistent_workers: true
+  # T5-large + CLIP ViT-L/14 is substantially larger than the original
+  # BERT-base + CLIP ViT-B/32 pairing. Keep the effective batch at 16 while
+  # using a conservative per-device batch by default.
+  batch_size: 1
+  eval_batch_size: 1
+  grad_accum_steps: 16
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  optimizer: adafactor
+  warmup_ratio: 0.10
+  mixed_precision: auto
+  distributed_backend: nccl
+  keep_stage_checkpoints: false
+  use_class_balancing: true
+  max_tag_pos_weight: 20.0
+  text_evidence_pos_weight: 3.0
+  text_evidence_focal_gamma: 2.0
+  visual_evidence_temperature: 0.07
+  visual_evidence_queue_size: 256
+  visual_presence_weight: 0.5
+  save_best_by: macro_f1
+
+  stage1_aux:
+    enabled: true
+    epochs: 3
+    lr: 2.0e-5
+    backbone_lr_scale: 0.1
+    loss_weights:
+      text_evidence: 1.0
+      visual_evidence: 1.0
+      reasoning_tags: 1.0
+
+  stage2_reasoning_warmup:
+    enabled: true
+    epochs: 2
+    lr: 1.0e-4
+    backbone_lr_scale: 0.1
+    routing_gold_mix_start: 0.8
+    routing_gold_mix_end: 0.3
+    loss_weights:
+      bridge: 1.0
+      reasoning_tags: 0.5
+
+  stage3_bridge:
+    enabled: true
+    epochs: 4
+    lr: 8.0e-5
+    backbone_lr_scale: 0.1
+    # Select and restore best_bridge.pt from true autoregressive dev generation.
+    selection_metric: rouge_l_f1_full
+    routing_gold_mix_start: 0.3
+    routing_gold_mix_end: 0.0
+    loss_weights:
+      bridge: 1.0
+      text_evidence: 0.2
+      visual_evidence: 0.2
+      reasoning_tags: 0.2
+
+  stage4_classifier:
+    enabled: true
+    epochs: 3
+    lr: 1.0e-4
+    backbone_lr_scale: 0.1
+    loss_weights:
+      sentiment: 1.0
+
+  stage5_joint:
+    enabled: true
+    # 25% -> 50% -> 75% -> 100% generated Bridge adaptation.
+    epochs: 4
+    lr: 2.0e-5
+    backbone_lr_scale: 0.1
+    routing_gold_mix_start: 0.0
+    routing_gold_mix_end: 0.0
+    generated_bridge_ratio_start: 0.25
+    generated_bridge_ratio_end: 1.0
+    loss_weights:
+      text_evidence: 0.5
+      visual_evidence: 0.5
+      reasoning_tags: 0.5
+      bridge: 1.0
+      sentiment: 1.0
+
+evaluation:
+  report_subsets: ["full", "implicit", "non_implicit"]
+  save_predictions: true
+  max_generation_length: 160
+  bridge_metrics:
+    enabled: true
+    rouge_l: true
+    bertscore: false
+    bertscore_model: null
+  llm_judge:
+    enabled: false
+    # LLM judge is an offline post-training evaluator only. Never call it inside training.
+    model: null
+    base_url: null

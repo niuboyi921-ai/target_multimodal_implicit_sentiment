@@ -1,0 +1,2 @@
+# Server scripts must remain executable-friendly on Linux clones.
+*.sh text eol=lf

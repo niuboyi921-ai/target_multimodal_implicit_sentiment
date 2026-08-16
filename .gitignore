@@ -1,0 +1,43 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# IDE and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Secrets and local overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Training artifacts and downloaded model caches
+outputs/
+checkpoints/
+wandb/
+runs/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+huggingface_cache/
+.cache/
+
+# Datasets are supplied to each training server manually and never synchronized.
+data/
+
+# Temporary patch/backup artifacts
+_patch_backup*/
+*.tmp
+*.log

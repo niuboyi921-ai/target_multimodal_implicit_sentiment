@@ -1,0 +1,59 @@
+name: Validate code and training reports
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "configs/**"
+      - "reports/**"
+      - "AGENTS.md"
+      - "requirements*.txt"
+      - "pyproject.toml"
+      - ".github/workflows/validate.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "configs/**"
+      - "reports/**"
+      - "AGENTS.md"
+      - "requirements*.txt"
+      - "pyproject.toml"
+      - ".github/workflows/validate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source code and reports
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install lightweight test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "torch>=2.5,<3" --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install "PyYAML>=6,<7" "Pillow>=10,<13" "numpy>=1.26,<3" "scikit-learn>=1.4,<2" "tqdm>=4.66,<5"
+
+      - name: Compile Python sources
+        run: python -m compileall -q src scripts
+
+      - name: Run architecture and smoke checks
+        run: |
+          python scripts/audit_architecture.py
+          python scripts/smoke_test.py
+
+      - name: Validate exported training reports
+        run: python scripts/validate_training_report.py --all

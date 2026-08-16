@@ -1,0 +1,3 @@
+# Optional post-training generation evaluators. Not required for model training.
+bert-score>=0.3.13,<1
+openai>=1.40,<3
