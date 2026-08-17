@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *.pyd
+*.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -24,6 +25,7 @@ Thumbs.db
 
 # Training artifacts and downloaded model caches
 outputs/
+outputs
 checkpoints/
 wandb/
 runs/
@@ -36,6 +38,7 @@ huggingface_cache/
 
 # Datasets are supplied to each training server manually and never synchronized.
 data/
+data
 
 # Temporary patch/backup artifacts
 _patch_backup*/
