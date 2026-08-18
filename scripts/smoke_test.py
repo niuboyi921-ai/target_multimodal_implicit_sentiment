@@ -127,6 +127,21 @@ def main():
 
     # Checkpoint writes are atomic/restartable and load through weights_only.
     with TemporaryDirectory() as tmp:
+        # Keep the report smoke test independent from real training data.
+        # GitHub Actions intentionally has no data/ directory.
+        smoke_config = Path(tmp) / "configs/twitter2015.yaml"
+        smoke_config.parent.mkdir(parents=True, exist_ok=True)
+        smoke_config.write_text(
+            (ROOT / "configs/twitter2015.yaml").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        smoke_data_dir = Path(tmp) / "data/twitter2015"
+        for split in ("train", "dev", "test"):
+            write_json(smoke_data_dir / f"{split}.json", [sample])
+        smoke_image_dir = smoke_data_dir / "images"
+        smoke_image_dir.mkdir(parents=True, exist_ok=True)
+        (smoke_image_dir / "1860693.jpg").write_bytes(b"smoke-image")
+
         checkpoint = Path(tmp) / "latest.pt"
         module = torch.nn.Linear(3, 2)
         optimizer = torch.optim.AdamW(module.parameters(), lr=1e-3)
@@ -200,7 +215,7 @@ def main():
                 sys.executable,
                 str(ROOT / "scripts/export_training_report.py"),
                 "--config",
-                str(ROOT / "configs/twitter2015.yaml"),
+                str(smoke_config),
                 "--output-dir",
                 str(output_dir),
                 "--reports-root",
