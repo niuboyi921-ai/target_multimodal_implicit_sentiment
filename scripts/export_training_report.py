@@ -206,7 +206,7 @@ def markdown_summary(manifest: dict[str, Any], curves: list[dict[str, Any]]) -> 
             values = [str(row.get("stage")), str(row.get("epoch"))]
             for name in loss_names:
                 value = row.get(name)
-                values.append("" if value is None else f"{float(value):.6g}")
+                values.append("" if value in (None, "") else f"{float(value):.6g}")
             lines.append("| " + " | ".join(values) + " |")
     else:
         lines.append("No completed epoch summaries were found.")
