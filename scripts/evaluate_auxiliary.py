@@ -70,15 +70,15 @@ def main() -> None:
                     compute_visual_evidence_target=True,
                 )
             tag_gold.append(batch["reasoning_tag_labels"].cpu().numpy())
-            tag_probs.append(core.tag_probs.cpu().numpy())
+            tag_probs.append(core.tag_probs.float().cpu().numpy())
             te_gold.extend(batch["text_evidence_labels"].cpu().numpy())
-            te_probs.extend(core.text_evidence_probs.cpu().numpy())
+            te_probs.extend(core.text_evidence_probs.float().cpu().numpy())
 
             mask = batch["has_visual_evidence"].bool()
             if mask.any() and core.visual_evidence_text_repr is not None:
                 v = torch.nn.functional.normalize(core.h_ve[mask], dim=-1)
                 t = torch.nn.functional.normalize(core.visual_evidence_text_repr[mask], dim=-1)
-                visual_cos.extend((v * t).sum(-1).cpu().tolist())
+                visual_cos.extend((v * t).sum(-1).float().cpu().tolist())
 
             for j in range(core.route_weights.size(0)):
                 route_rows.append(
