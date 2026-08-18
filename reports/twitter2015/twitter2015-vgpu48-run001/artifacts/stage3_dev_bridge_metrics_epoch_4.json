@@ -1,0 +1,33 @@
+{
+  "structure": {
+    "n": 1083,
+    "valid_count": 542,
+    "valid_rate": 0.5004616805170822,
+    "error_counts": {
+      "valid": 542,
+      "one or more bridge fields are empty": 541
+    }
+  },
+  "reference": {
+    "n_total": 1083,
+    "n_with_reference": 1083,
+    "note": "ROUGE-L/BERTScore compare against one reference wording only. They are auxiliary metrics because reasoning text has multiple valid paraphrases.",
+    "rouge_l_f1": {
+      "full": 0.0201921802114109,
+      "grounded_synthesis": 0.018479373732127,
+      "reasoning_transition": 0.0016045702254739243,
+      "evaluative_implication": 0.002725075889559315
+    }
+  },
+  "inference_contract": {
+    "autoregressive_generation": true,
+    "routing_gold_mix": 0.0,
+    "uses_gold_reasoning_tags": false,
+    "uses_reference_bridge_as_decoder_input": false,
+    "reference_bridge_used_only_as_evaluation_target": true
+  },
+  "selection": {
+    "metric": "rouge_l_f1_full",
+    "score": 0.0201921802114109
+  }
+}

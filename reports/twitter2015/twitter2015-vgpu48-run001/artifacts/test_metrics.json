@@ -1,0 +1,52 @@
+{
+  "sentiment": {
+    "full": {
+      "n": 985,
+      "accuracy": 0.5147208121827411,
+      "macro_precision": 0.2969399851319041,
+      "macro_recall": 0.32917624521072797,
+      "macro_f1": 0.3117212614972312
+    },
+    "implicit": {
+      "n": 282,
+      "accuracy": 0.18439716312056736,
+      "macro_precision": 0.20156765676567656,
+      "macro_recall": 0.2647010647010647,
+      "macro_f1": 0.13450261316325626
+    },
+    "non_implicit": {
+      "n": 703,
+      "accuracy": 0.647226173541963,
+      "macro_precision": 0.3367846804720552,
+      "macro_recall": 0.3461934405907241,
+      "macro_f1": 0.33132059458087443
+    }
+  },
+  "bridge_structure": {
+    "n": 985,
+    "valid_count": 496,
+    "valid_rate": 0.5035532994923858,
+    "error_counts": {
+      "valid": 496,
+      "one or more bridge fields are empty": 489
+    }
+  },
+  "bridge_reference": {
+    "n_total": 985,
+    "n_with_reference": 985,
+    "note": "ROUGE-L/BERTScore compare against one reference wording only. They are auxiliary metrics because reasoning text has multiple valid paraphrases.",
+    "rouge_l_f1": {
+      "full": 0.02001804121179762,
+      "grounded_synthesis": 0.0191211310671404,
+      "reasoning_transition": 0.0015622003149040658,
+      "evaluative_implication": 0.003945348583968124
+    }
+  },
+  "evaluation_protocol": {
+    "sentiment_inference_uses_gold_evidence": false,
+    "sentiment_inference_uses_gold_reasoning_tags": false,
+    "sentiment_inference_uses_reference_bridge": false,
+    "reference_bridge_used_only_for_offline_generation_metrics": true,
+    "llm_judge_called_during_training": false
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "run_id": "twitter2015-vgpu48-run001",
+  "stage": "stage1_aux",
+  "epoch": 2,
+  "stage_complete": false,
+  "routing_gold_mix": 0.0,
+  "generated_bridge_ratio": 0.0,
+  "trainable_parameters": 646768135,
+  "world_size": 1,
+  "optimizer_steps_per_epoch": 189,
+  "mean_losses": {
+    "text_evidence": 0.27225530511188256,
+    "visual_evidence": 4.576152883697331,
+    "reasoning_tags": 0.9217154721801097
+  },
+  "optimizer": "adafactor",
+  "mixed_precision": "bfloat16",
+  "best_macro_f1": -1.0,
+  "best_bridge_score": null
+}

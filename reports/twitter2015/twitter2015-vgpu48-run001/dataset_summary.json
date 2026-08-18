@@ -1,0 +1,48 @@
+{
+  "dataset_name": "twitter2015",
+  "splits": {
+    "train": {
+      "records": 3016,
+      "sentiment": {
+        "negative": 319,
+        "neutral": 1855,
+        "positive": 842
+      },
+      "implicit": 843,
+      "non_implicit": 2173,
+      "has_text_evidence": 2698,
+      "has_visual_evidence": 2363,
+      "has_reasoning_bridge": 3016
+    },
+    "dev": {
+      "records": 1083,
+      "sentiment": {
+        "negative": 132,
+        "neutral": 662,
+        "positive": 289
+      },
+      "implicit": 323,
+      "non_implicit": 760,
+      "has_text_evidence": 983,
+      "has_visual_evidence": 857,
+      "has_reasoning_bridge": 1083
+    },
+    "test": {
+      "records": 985,
+      "sentiment": {
+        "negative": 95,
+        "neutral": 600,
+        "positive": 290
+      },
+      "implicit": 282,
+      "non_implicit": 703,
+      "has_text_evidence": 870,
+      "has_visual_evidence": 786,
+      "has_reasoning_bridge": 985
+    }
+  },
+  "images": {
+    "count": 8288,
+    "total_bytes": 614616987
+  }
+}

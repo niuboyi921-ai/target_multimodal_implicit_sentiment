@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "run_id": "twitter2015-vgpu48-run001",
+  "experiment_name": "twitter2015_evidence_multipath",
+  "status": "completed",
+  "started_at_utc": "2026-08-18T01:34:49.049690+00:00",
+  "finished_at_utc": "2026-08-18T05:22:37.415690+00:00",
+  "config_path": "configs/twitter2015.yaml",
+  "command": [
+    "scripts/train.py",
+    "--config",
+    "configs/twitter2015.yaml",
+    "--output-dir",
+    "/root/projects/target_multimodal_implicit_sentiment/outputs/twitter2015/runs/twitter2015-vgpu48-run001",
+    "--run-id",
+    "twitter2015-vgpu48-run001",
+    "--resume",
+    "/root/autodl-tmp/tmis/outputs/twitter2015/runs/twitter2015-vgpu48-run001/latest.pt"
+  ],
+  "git": {
+    "commit": "5905072e661e2944afd108431079ca35dabcc583",
+    "branch": "main",
+    "tracked_worktree_dirty": false,
+    "repository_available": true
+  },
+  "environment": {
+    "python": "3.12.3 | packaged by Anaconda, Inc. | (main, May  6 2024, 19:46:43) [GCC 11.2.0]",
+    "platform": "Linux-5.15.0-94-generic-x86_64-with-glibc2.35",
+    "cpu_count": 208,
+    "packages": {
+      "torch": "2.8.0+cu128",
+      "transformers": "4.57.6",
+      "sentencepiece": "0.2.2",
+      "numpy": "2.3.2",
+      "scikit-learn": "1.9.0",
+      "Pillow": "11.3.0",
+      "PyYAML": "6.0.2"
+    },
+    "torch_cuda_version": "12.8",
+    "cudnn_version": 91002,
+    "cuda_available": true,
+    "gpu_count": 1,
+    "gpus": [
+      {
+        "index": 0,
+        "name": "NVIDIA GeForce RTX 4090",
+        "total_memory_bytes": 50866487296,
+        "compute_capability": "8.9"
+      }
+    ]
+  },
+  "error": null
+}

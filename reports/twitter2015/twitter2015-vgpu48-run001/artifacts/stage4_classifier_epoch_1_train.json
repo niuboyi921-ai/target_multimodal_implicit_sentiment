@@ -1,0 +1,18 @@
+{
+  "run_id": "twitter2015-vgpu48-run001",
+  "stage": "stage4_classifier",
+  "epoch": 1,
+  "stage_complete": false,
+  "routing_gold_mix": 0.0,
+  "generated_bridge_ratio": 0.0,
+  "trainable_parameters": 24406531,
+  "world_size": 1,
+  "optimizer_steps_per_epoch": 189,
+  "mean_losses": {
+    "sentiment": 0.7967843381226043
+  },
+  "optimizer": "adafactor",
+  "mixed_precision": "bfloat16",
+  "best_macro_f1": -1.0,
+  "best_bridge_score": 0.0201921802114109
+}
