@@ -1,0 +1,7 @@
+{
+  "checkpoint": "/root/projects/target_multimodal_implicit_sentiment/outputs/twitter2015/runs/twitter2015-vgpu48-run001/best_bridge.pt",
+  "selection_metric": "rouge_l_f1_full",
+  "selection_score": 0.0201921802114109,
+  "epoch": 4,
+  "restored_before_stage4": true
+}

@@ -1,0 +1,51 @@
+{
+  "reasoning_tags": {
+    "threshold": 0.5,
+    "macro_tag_f1": 0.4703352265192378,
+    "per_tag": {
+      "explicit_cue_present": {
+        "accuracy": 0.19390862944162437,
+        "precision": 0.14859002169197397,
+        "recall": 0.9383561643835616,
+        "f1": 0.2565543071161049
+      },
+      "implicit_reasoning_required": {
+        "accuracy": 0.30253807106598984,
+        "precision": 0.28342245989304815,
+        "recall": 0.9397163120567376,
+        "f1": 0.4354971240755957
+      },
+      "cross_modal_reasoning_required": {
+        "accuracy": 0.5634517766497462,
+        "precision": 0.5635245901639344,
+        "recall": 0.9927797833935018,
+        "f1": 0.7189542483660131
+      }
+    }
+  },
+  "text_evidence_token": {
+    "n_tokens": 27531,
+    "precision": 0.3211512783739677,
+    "recall": 0.8567282321899736,
+    "f1": 0.4671774396604439
+  },
+  "visual_evidence_positive_cosine_mean": 0.7309309398854962,
+  "route_weight_means": {
+    "full": {
+      "direct": 0.7093710223430304,
+      "implicit": 0.7141437856679035,
+      "cross_modal": 0.7142389633328782
+    },
+    "implicit": {
+      "direct": 0.7091422753131136,
+      "implicit": 0.7148908347102767,
+      "cross_modal": 0.7145029801003476
+    },
+    "non_implicit": {
+      "direct": 0.7094627814645618,
+      "implicit": 0.7138441159240213,
+      "cross_modal": 0.7141330561800667
+    }
+  },
+  "note": "Auxiliary metrics use gold auxiliary annotations only as evaluation targets; they are not fed into final sentiment inference."
+}

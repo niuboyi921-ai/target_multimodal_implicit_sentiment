@@ -1,0 +1,30 @@
+[
+  {
+    "name": "best_bridge.pt",
+    "size_bytes": 4343437645,
+    "modified_at_utc": "2026-08-17T09:10:26.723397+00:00",
+    "sha256": null,
+    "stored_in_git": false
+  },
+  {
+    "name": "best_joint.pt",
+    "size_bytes": 4343435956,
+    "modified_at_utc": "2026-08-17T13:50:35.245173+00:00",
+    "sha256": null,
+    "stored_in_git": false
+  },
+  {
+    "name": "latest.pt",
+    "size_bytes": 4343431504,
+    "modified_at_utc": "2026-08-18T05:22:36.969079+00:00",
+    "sha256": null,
+    "stored_in_git": false
+  },
+  {
+    "name": "stage5_generated_only.pt",
+    "size_bytes": 4343449543,
+    "modified_at_utc": "2026-08-18T05:22:25.660508+00:00",
+    "sha256": null,
+    "stored_in_git": false
+  }
+]

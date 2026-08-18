@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "run_id": "twitter2015-vgpu48-run001",
+  "source_run_id": "twitter2015-vgpu48-run001",
+  "experiment_name": "twitter2015_evidence_multipath",
+  "dataset_name": "twitter2015",
+  "status": "completed",
+  "started_at_utc": "2026-08-18T01:34:49.049690+00:00",
+  "finished_at_utc": "2026-08-18T05:22:37.415690+00:00",
+  "exported_at_utc": "2026-08-18T07:07:44.518050+00:00",
+  "training_git": {
+    "commit": "5905072e661e2944afd108431079ca35dabcc583",
+    "branch": "main",
+    "tracked_worktree_dirty": false,
+    "repository_available": true
+  },
+  "export_git": {
+    "commit": "1417338e8edab45b558b71a973e87899ff761b7e",
+    "branch": "main",
+    "tracked_worktree_dirty": false,
+    "repository_available": true
+  },
+  "environment": {
+    "python": "3.12.3 | packaged by Anaconda, Inc. | (main, May  6 2024, 19:46:43) [GCC 11.2.0]",
+    "platform": "Linux-5.15.0-94-generic-x86_64-with-glibc2.35",
+    "cpu_count": 208,
+    "packages": {
+      "torch": "2.8.0+cu128",
+      "transformers": "4.57.6",
+      "sentencepiece": "0.2.2",
+      "numpy": "2.3.2",
+      "scikit-learn": "1.9.0",
+      "Pillow": "11.3.0",
+      "PyYAML": "6.0.2"
+    },
+    "torch_cuda_version": "12.8",
+    "cudnn_version": 91002,
+    "cuda_available": true,
+    "gpu_count": 1,
+    "gpus": [
+      {
+        "index": 0,
+        "name": "NVIDIA GeForce RTX 4090",
+        "total_memory_bytes": 50866487296,
+        "compute_capability": "8.9"
+      }
+    ]
+  },
+  "source_output_dir": "outputs/twitter2015/runs/twitter2015-vgpu48-run001",
+  "checkpoint_files_are_external": true,
+  "checkpoint_hashes_computed": false,
+  "console_tail_included": false,
+  "copied_output_artifact_count": 29,
+  "epoch_summary_count": 16,
+  "error": null,
+  "artifacts": [
+    {
+      "path": "config.yaml",
+      "size_bytes": 3042,
+      "sha256": "89a38883d7a5b90f937138cf84b5d8e961ebdfa87baacc9a70b0b6f6574f78c2"
+    },
+    {
+      "path": "environment.json",
+      "size_bytes": 652,
+      "sha256": "ae65f3e97c7d373540538d329cd4504e26794352dab4e93c73d08a0175802806"
+    },
+    {
+      "path": "dataset_summary.json",
+      "size_bytes": 1015,
+      "sha256": "c4e0f8bd60754f36cca7c3fc718dd3a9354ed7aef560cbce620085a617b7e01e"
+    },
+    {
+      "path": "learning_curves.csv",
+      "size_bytes": 2093,
+      "sha256": "2b0765e470436865690e125002e165118c1b4d76b4556b2bb04c810cd5e5b6ef"
+    },
+    {
+      "path": "checkpoint_manifest.json",
+      "size_bytes": 706,
+      "sha256": "d590575aea70a8ce05147dbcc60da3aa19536544282e056ef9d4f89ecdb4acf5"
+    },
+    {
+      "path": "RUN_SUMMARY.md",
+      "size_bytes": 1847,
+      "sha256": "76d57de471324f5c1ffd6fa273cf72c034c5fb3a3a8cf92140253bd86d860b45"
+    },
+    {
+      "path": "artifacts/auxiliary_metrics.json",
+      "size_bytes": 1516,
+      "sha256": "b67d17a0520ce8f16ec3b26b6db1390971ab17411aff3635ff732eae25b1acd6"
+    },
+    {
+      "path": "artifacts/dev_metrics_epoch_1.json",
+      "size_bytes": 574,
+      "sha256": "7190f411bab2626d20038fa4b1bff963df90ab4de155e345c655723fd1d36555"
+    },
+    {
+      "path": "artifacts/dev_metrics_epoch_2.json",
+      "size_bytes": 573,
+      "sha256": "8b5b888230a834b01517727863b3304e885f7d7d899b254ab7b08beaa089df3a"
+    },
+    {
+      "path": "artifacts/dev_metrics_epoch_3.json",
+      "size_bytes": 573,
+      "sha256": "994764b59c0633b0983e78cd3241fcca513bd4a5455f5c988cd5439b0abf5767"
+    },
+    {
+      "path": "artifacts/dev_metrics_epoch_4.json",
+      "size_bytes": 576,
+      "sha256": "c2b9af50409fc044485f36106fe34939e3d6f77f2ea9c2bcaac4d25e49024607"
+    },
+    {
+      "path": "artifacts/run_state.json",
+      "size_bytes": 1584,
+      "sha256": "16cbc2aba54cd651e498f8fe362b441bc2b5d22fec3df6aed71576b6cdba6350"
+    },
+    {
+      "path": "artifacts/stage1_aux_epoch_1_train.json",
+      "size_bytes": 524,
+      "sha256": "1c9bd7768a8296f0ebd0a15907541f5fff991c6990d45b9637f7950ec99fee6b"
+    },
+    {
+      "path": "artifacts/stage1_aux_epoch_2_train.json",
+      "size_bytes": 525,
+      "sha256": "e9b23c9b0f3b56bfcb5d4c2be706842bff7536c629931d0fe9c2892e769c1ed4"
+    },
+    {
+      "path": "artifacts/stage1_aux_epoch_3_train.json",
+      "size_bytes": 524,
+      "sha256": "8277ae510fac6dae8772c45a44cb03846373a50ca3e1fc0bc6184bdec56a758a"
+    },
+    {
+      "path": "artifacts/stage2_reasoning_warmup_epoch_1_train.json",
+      "size_bytes": 487,
+      "sha256": "1980c226879dfc06f1a521c1a2b4100502fea81efb36c28777a826fff6c5f57c"
+    },
+    {
+      "path": "artifacts/stage2_reasoning_warmup_epoch_2_train.json",
+      "size_bytes": 504,
+      "sha256": "b04a82de34982735756da9972ef35d25e01afc2dde660b557632ab91f62ca51a"
+    },
+    {
+      "path": "artifacts/stage3_best_bridge_selected.json",
+      "size_bytes": 269,
+      "sha256": "3fd676667765e5715bac993dfbefbeb779c4bb0f77b0fb742912b33abde9b02b"
+    },
+    {
+      "path": "artifacts/stage3_bridge_epoch_1_train.json",
+      "size_bytes": 576,
+      "sha256": "eb067e3a9d4d4cbe05a25b2388cd717e320db63600089fe15c5a3e2d70dcab08"
+    },
+    {
+      "path": "artifacts/stage3_bridge_epoch_2_train.json",
+      "size_bytes": 576,
+      "sha256": "57fcd87856f464ce78041edc4d512078c2aea95d592fda2688f3a35d043a2a8a"
+    },
+    {
+      "path": "artifacts/stage3_bridge_epoch_3_train.json",
+      "size_bytes": 577,
+      "sha256": "eb9a3fa89f8e8e16bb1288ffd0f6f01b56d1a19d350241f92014b07479269810"
+    },
+    {
+      "path": "artifacts/stage3_bridge_epoch_4_train.json",
+      "size_bytes": 573,
+      "sha256": "abd110c6ba3ca0419a6b362a63cd182168f67b2bdc0b59942a4078bea72f0c8e"
+    },
+    {
+      "path": "artifacts/stage3_dev_bridge_metrics_epoch_1.json",
+      "size_bytes": 987,
+      "sha256": "a106d279fdeedae14d4a527048efc7e36153b18b3a12703387c79813e6f2bb9e"
+    },
+    {
+      "path": "artifacts/stage3_dev_bridge_metrics_epoch_2.json",
+      "size_bytes": 986,
+      "sha256": "170a2f90fdb61146e6c9ef56f3c335d356f67ea6b15e2a3e7ddfaec0483e42fc"
+    },
+    {
+      "path": "artifacts/stage3_dev_bridge_metrics_epoch_3.json",
+      "size_bytes": 987,
+      "sha256": "8cf5901432c4ad81fb5f6042da7ba5175daff0eee346e646b13be525fbbea853"
+    },
+    {
+      "path": "artifacts/stage3_dev_bridge_metrics_epoch_4.json",
+      "size_bytes": 981,
+      "sha256": "dcd559920abe3a6d167ce20c2e491af3ce9147a5df980968f329449ee6f85f52"
+    },
+    {
+      "path": "artifacts/stage4_classifier_epoch_1_train.json",
+      "size_bytes": 456,
+      "sha256": "21f63968556988d1d3280c3ac070a2950a26bd60c5921f5b64cb3d4481794e95"
+    },
+    {
+      "path": "artifacts/stage4_classifier_epoch_2_train.json",
+      "size_bytes": 457,
+      "sha256": "41b21a569c74796266947d113985bd34c45b3bc432c57cdba6afed608453b9fb"
+    },
+    {
+      "path": "artifacts/stage4_classifier_epoch_3_train.json",
+      "size_bytes": 457,
+      "sha256": "9070c2aecbde1679ec963913547460305d576b5ef050b43f7fe74cf620e83a1e"
+    },
+    {
+      "path": "artifacts/stage5_joint_epoch_1_train.json",
+      "size_bytes": 628,
+      "sha256": "008d7634be172ae66852ebfa176a1047830ee87ceec6cb357016c197b894b971"
+    },
+    {
+      "path": "artifacts/stage5_joint_epoch_2_train.json",
+      "size_bytes": 626,
+      "sha256": "3833a7026aa1e4686f49f25f2c139785afe8c57471bcc0f7ee36d8fc90448c4e"
+    },
+    {
+      "path": "artifacts/stage5_joint_epoch_3_train.json",
+      "size_bytes": 626,
+      "sha256": "b6e404cb121e0fadc4dc98831b09c822b2ed75bcba458f60d909270cea242c23"
+    },
+    {
+      "path": "artifacts/stage5_joint_epoch_4_train.json",
+      "size_bytes": 624,
+      "sha256": "534b031bab5bdfedcccc55ddc75265d49e69f0208d745b1019f8b5128afce1cb"
+    },
+    {
+      "path": "artifacts/test_metrics.json",
+      "size_bytes": 1607,
+      "sha256": "fdf54b89e0c2809e61b746f28f548803fea20da6c28f9d2ca851a3927bb7df2a"
+    },
+    {
+      "path": "artifacts/test_predictions.json",
+      "size_bytes": 1873943,
+      "sha256": "0cfeccfc837a8da95415cdbc515a3ec1a015090bae6ce841106629c90b520ff5"
+    }
+  ]
+}
