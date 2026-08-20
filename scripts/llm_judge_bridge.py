@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import sys
 from statistics import mean
@@ -15,6 +14,7 @@ from tmis.config import load_config, resolve_project_path
 from tmis.data.dataset import load_json_records
 from tmis.data.schema import normalize_record
 from tmis.evaluation.llm_judge import judge_one_openai_compatible
+from tmis.training.ai_feedback import load_bailian_credentials
 from tmis.utils import write_json
 
 
@@ -25,14 +25,9 @@ def main() -> None:
     ap.add_argument("--config", default="configs/twitter2015.yaml")
     ap.add_argument("--predictions", default=None)
     ap.add_argument("--model", required=True)
-    ap.add_argument("--base-url", default=os.getenv("LLM_JUDGE_BASE_URL"))
-    ap.add_argument("--api-key", default=os.getenv("LLM_JUDGE_API_KEY"))
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--output", default=None)
     args = ap.parse_args()
-
-    if not args.api_key:
-        raise SystemExit("Missing API key: pass --api-key or set LLM_JUDGE_API_KEY")
 
     try:
         from openai import OpenAI
@@ -49,10 +44,8 @@ def main() -> None:
     records = [normalize_record(r, i) for i, r in enumerate(load_json_records(test_path))]
     by_index = {r.index: r for r in records}
 
-    client_kwargs = {"api_key": args.api_key}
-    if args.base_url:
-        client_kwargs["base_url"] = args.base_url
-    client = OpenAI(**client_kwargs)
+    api_key, base_url = load_bailian_credentials()
+    client = OpenAI(api_key=api_key, base_url=base_url)
 
     judged = []
     rows = predictions[: args.limit] if args.limit else predictions
@@ -63,8 +56,6 @@ def main() -> None:
         payload = {
             "restored_text": record.restored_text,
             "target": record.target,
-            "text_evidence": record.text_evidence,
-            "visual_evidence": record.visual_evidence,
             "generated_reasoning_bridge": generated,
         }
         try:

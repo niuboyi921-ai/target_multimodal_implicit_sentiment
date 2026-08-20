@@ -20,7 +20,7 @@ class ReasoningBridgeGenerator(nn.Module):
 
     The language decoder, shared token embeddings, and LM head come from the
     same pretrained T5-large used by the text encoder. This module only projects
-    the five multimodal bridge-memory tokens into T5's hidden space and applies
+    the four multimodal bridge-memory tokens into T5's hidden space and applies
     the required [GROUND] -> [TRANSITION] -> [IMPLICATION] generation contract.
     """
 
@@ -38,7 +38,7 @@ class ReasoningBridgeGenerator(nn.Module):
             nn.Linear(hidden_dim, t5_hidden_dim),
             nn.LayerNorm(t5_hidden_dim),
         )
-        self.memory_type_embeddings = nn.Embedding(5, t5_hidden_dim)
+        self.memory_type_embeddings = nn.Embedding(4, t5_hidden_dim)
 
     def _encoder_outputs(self, memory: torch.Tensor) -> tuple[BaseModelOutput, torch.Tensor]:
         projected = self.memory_proj(memory)
@@ -84,6 +84,10 @@ class ReasoningBridgeGenerator(nn.Module):
         implication_id: int,
         max_length: int | None = None,
         min_tokens_per_field: int = 2,
+        do_sample: bool = False,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        num_return_sequences: int = 1,
     ) -> torch.Tensor:
         max_length = min(int(max_length or self.max_length), self.max_length)
         min_required = 3 * int(min_tokens_per_field) + 5
@@ -138,18 +142,31 @@ class ReasoningBridgeGenerator(nn.Module):
         )
         decoder_input_ids[:, 1] = bos_id
         decoder_input_ids[:, 2] = ground_id
+        generation_kwargs: dict[str, Any] = {
+            "do_sample": bool(do_sample),
+            "num_beams": 1,
+            "num_return_sequences": int(num_return_sequences),
+        }
+        if do_sample:
+            if temperature <= 0:
+                raise ValueError("sampling temperature must be positive")
+            if not 0.0 < top_p <= 1.0:
+                raise ValueError("sampling top_p must be in (0, 1]")
+            generation_kwargs.update(
+                temperature=float(temperature),
+                top_p=float(top_p),
+            )
         generated = t5_model.generate(
             encoder_outputs=encoder_outputs,
             attention_mask=memory_mask,
             decoder_input_ids=decoder_input_ids,
             prefix_allowed_tokens_fn=prefix_allowed_tokens_fn,
             max_length=max_length + 1,
-            do_sample=False,
-            num_beams=1,
             use_cache=True,
             pad_token_id=self.pad_id,
             eos_token_id=eos_id,
             return_dict_in_generate=False,
+            **generation_kwargs,
         )
         # T5 prepends its internal decoder-start PAD. Exclude it from the
         # externally visible structured Bridge sequence.

@@ -20,14 +20,14 @@ from tmis.models.bridge import (
 )
 from tmis.models.conditioning import MultimodalFusion, TargetConditioner
 from tmis.models.encoders import TextTargetEncoder, VisionEncoder
-from tmis.models.evidence import TextEvidenceHead, VisualEvidenceHead
+from tmis.models.lora import is_lora_parameter
 from tmis.models.reasoning import (
-    CrossModalRelationModule,
     CrossPathInteraction,
     MultiPathReasoner,
     ReasoningTagHead,
     SoftRouter,
 )
+from tmis.models.selectors import TargetAwareTextSelector, TargetAwareVisualSelector
 
 
 @dataclass
@@ -36,22 +36,22 @@ class CoreOutput:
     h_va: torch.Tensor
     h_a: torch.Tensor
     h_f: torch.Tensor
-    text_evidence_logits: torch.Tensor
-    text_evidence_probs: torch.Tensor
-    h_te: torch.Tensor
-    visual_evidence_weights: torch.Tensor
-    visual_presence_logits: torch.Tensor
-    h_ve: torch.Tensor
+    text_selector_logits: torch.Tensor
+    text_selector_weights: torch.Tensor
+    h_text_selected: torch.Tensor
+    visual_selector_weights: torch.Tensor
+    h_visual_selected: torch.Tensor
+    h_text_global: torch.Tensor
     tag_logits: torch.Tensor
     tag_probs: torch.Tensor
     route_weights: torch.Tensor
     h_reasoning: torch.Tensor
-    h_relation: torch.Tensor
     bridge_memory: torch.Tensor
-    visual_evidence_text_repr: torch.Tensor | None
 
 
-class EvidenceAwareMultiPathModel(nn.Module):
+class SelectorGuidedMultiPathModel(nn.Module):
+    checkpoint_state_format = "parameter_efficient_v1"
+
     def __init__(self, cfg: dict[str, Any], tokenizer: Any) -> None:
         super().__init__()
         m = cfg["model"]
@@ -66,6 +66,7 @@ class EvidenceAwareMultiPathModel(nn.Module):
             m["text_backbone"],
             len(tokenizer),
             gradient_checkpointing=bool(m.get("text_gradient_checkpointing", False)),
+            lora_config=m.get("lora"),
             revision=m.get("text_backbone_revision"),
             local_files_only=bool(m.get("local_files_only", False)),
         )
@@ -78,13 +79,11 @@ class EvidenceAwareMultiPathModel(nn.Module):
         self.text_proj = nn.Linear(self.text_encoder.hidden_size, hidden)
         self.vision_proj = nn.Linear(self.vision_encoder.hidden_size, hidden)
         self.target_proj = nn.Linear(self.text_encoder.hidden_size, hidden)
-        self.aux_text_proj = nn.Linear(self.text_encoder.hidden_size, hidden)
-
         self.text_conditioner = TargetConditioner(hidden, dropout)
         self.visual_conditioner = TargetConditioner(hidden, dropout)
         self.fusion = MultimodalFusion(hidden, heads, dropout)
-        self.text_evidence_head = TextEvidenceHead(hidden, dropout)
-        self.visual_evidence_head = VisualEvidenceHead(hidden, dropout)
+        self.text_selector = TargetAwareTextSelector(hidden, dropout)
+        self.visual_selector = TargetAwareVisualSelector(hidden, dropout)
         self.tag_head = ReasoningTagHead(hidden, dropout)
         self.reasoner = MultiPathReasoner(hidden, dropout)
         self.router = SoftRouter(
@@ -98,7 +97,6 @@ class EvidenceAwareMultiPathModel(nn.Module):
         self.path_interaction = CrossPathInteraction(
             hidden, heads, int(m["interaction_layers"]), dropout
         )
-        self.relation = CrossModalRelationModule(hidden, dropout)
 
         self.bridge_generator = ReasoningBridgeGenerator(
             hidden_dim=hidden,
@@ -119,16 +117,48 @@ class EvidenceAwareMultiPathModel(nn.Module):
             implication_id=tokenizer.convert_tokens_to_ids(IMPLICATION_TOKEN),
             pretrained_token_embeddings=self.text_encoder.backbone.shared.weight,
         )
+        self.bridge_classifier.token_embedding.weight.requires_grad_(False)
 
         self.bos_id = tokenizer.convert_tokens_to_ids(BRIDGE_BOS_TOKEN)
         self.eos_id = tokenizer.convert_tokens_to_ids(BRIDGE_EOS_TOKEN)
         self.ground_id = tokenizer.convert_tokens_to_ids(GROUND_TOKEN)
 
+    @staticmethod
+    def _is_frozen_pretrained_state(name: str) -> bool:
+        if name.startswith("vision_encoder.backbone."):
+            return True
+        if name.startswith("text_encoder.backbone.") and not is_lora_parameter(name):
+            return True
+        # This large table is copied from the frozen T5 embedding and remains
+        # fixed under the small-data protocol, so it can be reconstructed.
+        return name == "bridge_classifier.token_embedding.weight"
+
+    def checkpoint_state_dict(self) -> dict[str, torch.Tensor]:
+        """Save LoRA and task modules without duplicating pretrained weights."""
+        return {
+            name: value
+            for name, value in self.state_dict().items()
+            if not self._is_frozen_pretrained_state(name)
+        }
+
+    def load_checkpoint_state_dict(self, state: dict[str, torch.Tensor]) -> None:
+        incompatible = self.load_state_dict(state, strict=False)
+        illegal_missing = [
+            name
+            for name in incompatible.missing_keys
+            if not self._is_frozen_pretrained_state(name)
+        ]
+        if illegal_missing or incompatible.unexpected_keys:
+            raise RuntimeError(
+                "invalid parameter-efficient checkpoint; "
+                f"missing={illegal_missing[:5]}, "
+                f"unexpected={incompatible.unexpected_keys[:5]}"
+            )
+
     def encode_and_reason(
         self,
         batch: dict[str, Any],
         routing_gold_mix: float = 0.0,
-        compute_visual_evidence_target: bool = False,
     ) -> CoreOutput:
         h_t_raw, h_a_raw = self.text_encoder(
             input_ids=batch["input_ids"],
@@ -147,27 +177,40 @@ class EvidenceAwareMultiPathModel(nn.Module):
         h_va, _ = self.visual_conditioner(h_v, h_a, None)
         _, _, h_f = self.fusion(h_ta, h_va, h_a, text_mask)
 
-        te_logits, te_probs, h_te = self.text_evidence_head(h_ta, h_f, text_mask)
-        h_ve, ve_weights, visual_presence_logits = self.visual_evidence_head(h_va, h_f)
+        text_selector_logits, text_selector_weights, h_text_selected = (
+            self.text_selector(h_ta, h_f, text_mask)
+        )
+        # CLIP position 0 is the global CLS token. Excluding it forces the
+        # visual selector to localize over patch tokens instead of taking a
+        # shortcut through an already pooled image representation.
+        h_visual_selected, visual_selector_weights = self.visual_selector(
+            h_va[:, 1:, :], h_f
+        )
 
-        # Gold visual_evidence text is a TRAINING TARGET only. It is encoded
-        # exclusively when the visual-evidence loss is requested; normal
-        # dev/test inference leaves this branch off, eliminating auxiliary-label
-        # computation from the prediction path.
-        visual_text_repr = None
-        if compute_visual_evidence_target and batch.get("visual_evidence_input_ids") is not None:
-            raw = self.text_encoder.encode_text_only(
-                batch["visual_evidence_input_ids"],
-                batch["visual_evidence_attention_mask"],
-            )
-            visual_text_repr = self.visual_evidence_head.project_evidence_text(self.aux_text_proj(raw))
-
-        tag_logits, tag_probs = self.tag_head(h_f)
-        # Model-structure contract from 模型结构.docx: Evidence Head,
-        # Reasoning Router, and Cross-modal Head are computed before the three
-        # reasoning paths. The cross-modal path consumes h_rel explicitly.
-        h_rel = self.relation(h_te, h_ve, h_a, h_f)
-        paths = self.reasoner(h_f, h_te, h_ve, h_a, h_rel)
+        # Reasoning tags supervise routing and pass gradients through both
+        # latent modality selectors. No manually annotated evidence enters
+        # this computation.
+        tag_logits, tag_probs = self.tag_head(
+            h_text_selected,
+            h_visual_selected,
+        )
+        # A masked global summary of target-conditioned text gives the
+        # implicit path broad textual context without exposing any visual or
+        # fused multimodal representation to that path.
+        text_mask_float = text_mask.to(h_ta.dtype)
+        h_text_global = (
+            (h_ta * text_mask_float.unsqueeze(-1)).sum(dim=1)
+            / text_mask_float.sum(dim=1, keepdim=True).clamp_min(1.0)
+        )
+        # Direct and Implicit remain text-only. The Cross path itself receives
+        # the selected modalities plus deterministic product/difference
+        # features, so no separately learned relation vector is required.
+        paths = self.reasoner(
+            h_text_selected,
+            h_visual_selected,
+            h_text_global,
+            h_a,
+        )
         # Gold tags are only passed when the curriculum mix is strictly > 0.
         # This makes the no-gold-tag test path explicit rather than relying on a
         # multiplication by zero inside the router.
@@ -179,26 +222,27 @@ class EvidenceAwareMultiPathModel(nn.Module):
             gold_mix=routing_gold_mix,
         )
         h_r = self.path_interaction(routed, h_f)
-        memory = torch.stack([h_r, h_rel, h_te, h_ve, h_a], dim=1)
+        memory = torch.stack(
+            [h_r, h_text_selected, h_visual_selected, h_a],
+            dim=1,
+        )
 
         return CoreOutput(
             h_ta=h_ta,
             h_va=h_va,
             h_a=h_a,
             h_f=h_f,
-            text_evidence_logits=te_logits,
-            text_evidence_probs=te_probs,
-            h_te=h_te,
-            visual_evidence_weights=ve_weights,
-            visual_presence_logits=visual_presence_logits,
-            h_ve=h_ve,
+            text_selector_logits=text_selector_logits,
+            text_selector_weights=text_selector_weights,
+            h_text_selected=h_text_selected,
+            visual_selector_weights=visual_selector_weights,
+            h_visual_selected=h_visual_selected,
+            h_text_global=h_text_global,
             tag_logits=tag_logits,
             tag_probs=tag_probs,
             route_weights=route_weights,
             h_reasoning=h_r,
-            h_relation=h_rel,
             bridge_memory=memory,
-            visual_evidence_text_repr=visual_text_repr,
         )
 
     def bridge_logits(self, core: CoreOutput, bridge_ids: torch.Tensor, bridge_mask: torch.Tensor) -> torch.Tensor:
@@ -211,7 +255,16 @@ class EvidenceAwareMultiPathModel(nn.Module):
         )
 
     @torch.no_grad()
-    def generate_bridge(self, core: CoreOutput, max_length: int) -> torch.Tensor:
+    def generate_bridge(
+        self,
+        core: CoreOutput,
+        max_length: int,
+        *,
+        do_sample: bool = False,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        num_return_sequences: int = 1,
+    ) -> torch.Tensor:
         # Generation must use inference-mode dropout semantics even when called
         # from a Stage-5 training forward. Restore the previous module modes so
         # differentiable losses continue in the requested training state.
@@ -230,6 +283,10 @@ class EvidenceAwareMultiPathModel(nn.Module):
                 implication_id=self.bridge_classifier.implication_id,
                 max_length=max_length,
                 min_tokens_per_field=int(self.cfg_model.get("bridge_min_tokens_per_field", 2)),
+                do_sample=do_sample,
+                temperature=temperature,
+                top_p=top_p,
+                num_return_sequences=num_return_sequences,
             )
         finally:
             self.text_encoder.backbone.train(t5_was_training)
@@ -267,7 +324,6 @@ class EvidenceAwareMultiPathModel(nn.Module):
         *,
         stage: str,
         routing_gold_mix: float = 0.0,
-        compute_visual_evidence_target: bool = False,
         compute_bridge: bool = False,
         compute_sentiment: bool = False,
         generated_bridge_ratio: float = 0.0,
@@ -283,13 +339,11 @@ class EvidenceAwareMultiPathModel(nn.Module):
         core = self.encode_and_reason(
             batch,
             routing_gold_mix=routing_gold_mix,
-            compute_visual_evidence_target=compute_visual_evidence_target,
         )
         outputs: dict[str, torch.Tensor | None] = {
-            "text_evidence_logits": core.text_evidence_logits,
-            "visual_evidence_repr": core.h_ve,
-            "visual_evidence_text_repr": core.visual_evidence_text_repr,
-            "visual_presence_logits": core.visual_presence_logits,
+            "text_selector_logits": core.text_selector_logits,
+            "text_selector_weights": core.text_selector_weights,
+            "visual_selector_weights": core.visual_selector_weights,
             "tag_logits": core.tag_logits,
         }
         if compute_bridge:
@@ -322,7 +376,6 @@ class EvidenceAwareMultiPathModel(nn.Module):
                     generation_core = self.encode_and_reason(
                         batch,
                         routing_gold_mix=0.0,
-                        compute_visual_evidence_target=False,
                     )
                     generated = self.generate_bridge(
                         generation_core, max_generation_length

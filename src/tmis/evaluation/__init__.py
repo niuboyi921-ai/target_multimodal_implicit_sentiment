@@ -1,7 +1,6 @@
 from .metrics import (
     compute_metrics,
     compute_reasoning_tag_metrics,
-    compute_text_evidence_token_metrics,
 )
 from .bridge_metrics import (
     ParsedBridge,
@@ -13,7 +12,6 @@ from .bridge_metrics import (
 __all__ = [
     "compute_metrics",
     "compute_reasoning_tag_metrics",
-    "compute_text_evidence_token_metrics",
     "ParsedBridge",
     "compute_bridge_reference_metrics",
     "compute_structure_metrics",

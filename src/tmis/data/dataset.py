@@ -80,8 +80,6 @@ class TwitterMultimodalDataset(Dataset):
             "image_name": r.image,
             "sentiment": r.sentiment,
             "sentiment_id": r.sentiment_id,
-            "text_evidence": r.text_evidence,
-            "visual_evidence": r.visual_evidence,
             "reasoning_tags": r.reasoning_tags,
             "reasoning_bridge": r.reasoning_bridge,
             "is_implicit": r.is_implicit,

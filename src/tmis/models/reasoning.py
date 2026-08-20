@@ -8,14 +8,31 @@ class ReasoningTagHead(nn.Module):
     def __init__(self, hidden_dim: int, dropout: float) -> None:
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(hidden_dim * 4, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, 3),
         )
 
-    def forward(self, h_f: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        logits = self.net(h_f)
+    def forward(
+        self,
+        h_text_selected: torch.Tensor,
+        h_visual_selected: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # Tag supervision must pass through both latent selectors. Excluding a
+        # direct h_f bypass prevents Stage 1 from solving tag prediction while
+        # ignoring selection. Product and difference features retain an
+        # explicit target-aware cross-modal comparison signal.
+        features = torch.cat(
+            [
+                h_text_selected,
+                h_visual_selected,
+                h_text_selected * h_visual_selected,
+                torch.abs(h_text_selected - h_visual_selected),
+            ],
+            dim=-1,
+        )
+        logits = self.net(features)
         return logits, torch.sigmoid(logits)
 
 
@@ -37,24 +54,32 @@ class PathMLP(nn.Module):
 class MultiPathReasoner(nn.Module):
     def __init__(self, hidden_dim: int, dropout: float) -> None:
         super().__init__()
-        self.direct = PathMLP(hidden_dim * 3, hidden_dim, dropout)
-        self.implicit = PathMLP(hidden_dim * 4, hidden_dim, dropout)
-        # The document architecture places a dedicated cross-modal head before
-        # the three paths. Its representation is consumed explicitly by the
-        # cross-modal path rather than being computed after path interaction.
+        # Keep the first two paths text-only. This makes their modality scope
+        # match the routing-tag semantics instead of leaking the fused
+        # multimodal representation (or selected visual features) into them.
+        self.direct = PathMLP(hidden_dim * 2, hidden_dim, dropout)
+        self.implicit = PathMLP(hidden_dim * 3, hidden_dim, dropout)
+        # The Cross path receives deterministic comparison features directly.
+        # This preserves an explicit cross-modal inductive bias without an
+        # additional unsupervised relation representation.
         self.cross = PathMLP(hidden_dim * 5, hidden_dim, dropout)
 
     def forward(
         self,
-        h_f: torch.Tensor,
-        h_te: torch.Tensor,
-        h_ve: torch.Tensor,
+        h_text_selected: torch.Tensor,
+        h_visual_selected: torch.Tensor,
+        h_text_global: torch.Tensor,
         h_a: torch.Tensor,
-        h_cross_modal: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        h_d = self.direct(h_f, h_te, h_a)
-        h_i = self.implicit(h_f, h_te, h_ve, h_a)
-        h_c = self.cross(h_f, h_te, h_ve, h_a, h_cross_modal)
+        h_d = self.direct(h_text_selected, h_a)
+        h_i = self.implicit(h_text_selected, h_text_global, h_a)
+        h_c = self.cross(
+            h_text_selected,
+            h_visual_selected,
+            torch.abs(h_text_selected - h_visual_selected),
+            h_text_selected * h_visual_selected,
+            h_a,
+        )
         return h_d, h_i, h_c
 
 
@@ -103,26 +128,3 @@ class CrossPathInteraction(nn.Module):
         z = self.encoder(x).mean(dim=1)
         g = self.gate(torch.cat([z, h_f], dim=-1))
         return self.norm(g * z + (1 - g) * h_f)
-
-
-class CrossModalRelationModule(nn.Module):
-    def __init__(self, hidden_dim: int, dropout: float) -> None:
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(hidden_dim * 6, hidden_dim * 2),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-        )
-
-    def forward(
-        self,
-        h_te: torch.Tensor,
-        h_ve: torch.Tensor,
-        h_a: torch.Tensor,
-        h_f: torch.Tensor,
-    ) -> torch.Tensor:
-        return self.net(
-            torch.cat([h_te, h_ve, torch.abs(h_te - h_ve), h_te * h_ve, h_a, h_f], dim=-1)
-        )

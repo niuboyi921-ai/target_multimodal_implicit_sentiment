@@ -5,14 +5,9 @@
   "image": "1860693",
   "sentiment": "positive",
   "source_dataset": "Twitter-2015",
-  "text_evidence": ["Chuck Bass is everything"],
-  "visual_evidence": [
-    "A man wears a bright blue suit with a patterned blue tie.",
-    "The man holds a rectangular gift box wrapped with a brown ribbon."
-  ],
   "reasoning_tags": {
     "explicit_cue_present": false,
-    "implicit_reasoning_required": true,
+    "implicit_sentiment_present": true,
     "cross_modal_reasoning_required": true
   },
   "reasoning_bridge": {

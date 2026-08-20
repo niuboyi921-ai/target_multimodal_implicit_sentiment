@@ -1,68 +1,64 @@
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn.functional as F
 
 
-def text_evidence_loss(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
-    pos_weight: float | torch.Tensor | None = None,
-    focal_gamma: float = 0.0,
+def selector_regularization_loss(
+    text_weights: torch.Tensor,
+    text_mask: torch.Tensor,
+    visual_weights: torch.Tensor,
+    *,
+    text_min_ratio: float = 0.05,
+    text_max_ratio: float = 0.50,
+    visual_min_normalized_entropy: float = 0.20,
+    visual_max_normalized_entropy: float = 0.90,
 ) -> torch.Tensor:
-    mask = labels.ne(-100)
-    if not mask.any():
-        return logits.sum() * 0.0
-    weight = None
-    if pos_weight is not None:
-        weight = torch.as_tensor(pos_weight, dtype=logits.dtype, device=logits.device)
-    raw = F.binary_cross_entropy_with_logits(
-        logits[mask], labels[mask], pos_weight=weight, reduction="none"
-    )
-    if focal_gamma > 0:
-        probs = torch.sigmoid(logits[mask])
-        pt = torch.where(labels[mask].bool(), probs, 1.0 - probs)
-        raw = raw * (1.0 - pt).pow(float(focal_gamma))
-    return raw.mean()
+    """Prevent unlabeled latent selectors from selecting everything or collapsing.
 
+    This regularizer does not pretend to identify a unique gold rationale. It
+    only constrains the amount of selected text and the concentration of visual
+    attention; semantic supervision still comes from reasoning tags and Bridge
+    generation.
+    """
+    if not 0.0 <= text_min_ratio <= text_max_ratio <= 1.0:
+        raise ValueError("text selector ratio bounds must satisfy 0 <= min <= max <= 1")
+    if not (
+        0.0
+        <= visual_min_normalized_entropy
+        <= visual_max_normalized_entropy
+        <= 1.0
+    ):
+        raise ValueError(
+            "visual selector entropy bounds must satisfy 0 <= min <= max <= 1"
+        )
 
-def visual_evidence_contrastive_loss(
-    visual_repr: torch.Tensor,
-    text_repr: torch.Tensor | None,
-    has_visual_evidence: torch.Tensor,
-    temperature: float = 0.07,
-    negative_bank: torch.Tensor | None = None,
-    presence_logits: torch.Tensor | None = None,
-    presence_weight: float = 1.0,
-) -> torch.Tensor:
-    presence = visual_repr.sum() * 0.0
-    if presence_logits is not None:
-        presence = F.binary_cross_entropy_with_logits(
-            presence_logits, has_visual_evidence.to(presence_logits.dtype)
+    mask = text_mask.to(dtype=torch.float32)
+    text = text_weights.float() * mask
+    text_ratio = text.sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)
+    text_penalty = (
+        F.relu(float(text_min_ratio) - text_ratio).square()
+        + F.relu(text_ratio - float(text_max_ratio)).square()
+    ).mean()
+
+    visual = visual_weights.float().clamp_min(1e-8)
+    if visual.size(1) <= 1:
+        normalized_entropy = torch.zeros(
+            visual.size(0), device=visual.device, dtype=visual.dtype
         )
-    if text_repr is None:
-        return float(presence_weight) * presence
-    mask = has_visual_evidence.bool()
-    if not mask.any():
-        return float(presence_weight) * presence
-    v = F.normalize(visual_repr[mask], dim=-1)
-    t = F.normalize(text_repr[mask], dim=-1)
-    candidates = t
-    if negative_bank is not None and negative_bank.numel() > 0:
-        candidates = torch.cat(
-            [t, F.normalize(negative_bank.detach(), dim=-1)], dim=0
+    else:
+        normalized_entropy = -(visual * visual.log()).sum(dim=1) / math.log(
+            visual.size(1)
         )
-    logits = v @ candidates.t() / temperature
-    labels = torch.arange(v.size(0), device=v.device)
-    alignment = F.cross_entropy(logits, labels)
-    if v.size(0) >= 2:
-        alignment = 0.5 * (
-            alignment + F.cross_entropy((t @ v.t()) / temperature, labels)
-        )
-    elif negative_bank is None or negative_bank.numel() == 0:
-        # Bootstrap the queue on the first positive example.
-        alignment = (1.0 - (v * t).sum(-1)).mean()
-    return alignment + float(presence_weight) * presence
+    visual_penalty = (
+        F.relu(float(visual_min_normalized_entropy) - normalized_entropy).square()
+        + F.relu(
+            normalized_entropy - float(visual_max_normalized_entropy)
+        ).square()
+    ).mean()
+    return text_penalty + visual_penalty
 
 
 def reasoning_tag_loss(
@@ -94,9 +90,67 @@ def bridge_generation_loss(
     )
 
 
+def sequence_log_probs(
+    logits: torch.Tensor,
+    target_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    pad_id: int,
+    *,
+    length_normalize: bool = True,
+) -> torch.Tensor:
+    """Return one differentiable log-probability per generated Bridge.
+
+    ``logits`` and ``target_ids`` follow the same right-shifted T5
+    teacher-forcing contract as :func:`bridge_generation_loss`. Padding and
+    tokens beyond the generated EOS mask do not contribute.
+    """
+    if logits.shape[:2] != target_ids.shape or target_ids.shape != attention_mask.shape:
+        raise ValueError("Bridge logits, target IDs, and attention mask must align")
+    token_log_probs = F.log_softmax(logits.float(), dim=-1).gather(
+        dim=-1,
+        index=target_ids.unsqueeze(-1),
+    ).squeeze(-1)
+    mask = attention_mask.bool() & target_ids.ne(int(pad_id))
+    summed = (token_log_probs * mask).sum(dim=-1)
+    if length_normalize:
+        return summed / mask.sum(dim=-1).clamp_min(1)
+    return summed
+
+
+def dpo_preference_loss(
+    chosen_logp: torch.Tensor,
+    rejected_logp: torch.Tensor,
+    chosen_reference_logp: torch.Tensor,
+    rejected_reference_logp: torch.Tensor,
+    *,
+    beta: float = 0.1,
+) -> torch.Tensor:
+    """Direct Preference Optimization loss for Judge-selected Bridge pairs."""
+    if beta <= 0:
+        raise ValueError("DPO beta must be positive")
+    policy_margin = chosen_logp - rejected_logp
+    reference_margin = chosen_reference_logp - rejected_reference_logp
+    return -F.logsigmoid(float(beta) * (policy_margin - reference_margin)).mean()
+
+
 def sentiment_loss(
     logits: torch.Tensor,
     labels: torch.Tensor,
     class_weight: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    return F.cross_entropy(logits, labels, weight=class_weight)
+    if class_weight is None:
+        return F.cross_entropy(logits, labels)
+
+    # PyTorch's weighted mean divides by the sum of the observed target
+    # weights. With the per-device batch size of one used by this project,
+    # that would cancel the only sample's class weight exactly. The weights
+    # are normalized to E_train[w_y] = 1 by the trainer, so an arithmetic mean
+    # keeps the expected sentiment-loss scale unchanged while preserving the
+    # intended per-sample reweighting through gradient accumulation.
+    per_sample = F.cross_entropy(
+        logits,
+        labels,
+        weight=class_weight,
+        reduction="none",
+    )
+    return per_sample.mean()

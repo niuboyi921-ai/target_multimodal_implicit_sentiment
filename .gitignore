@@ -22,6 +22,7 @@ Thumbs.db
 !.env.example
 *.pem
 *.key
+/src/tmis/bailian_credentials_local.py
 
 # Training artifacts and downloaded model caches
 outputs/

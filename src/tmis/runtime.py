@@ -7,7 +7,7 @@ from tmis.config import resolve_project_path
 from tmis.constants import BRIDGE_EOS_TOKEN, BRIDGE_SPECIAL_TOKENS
 from tmis.data.dataset import TwitterMultimodalDataset
 from tmis.data.collator import MultimodalCollator
-from tmis.models import EvidenceAwareMultiPathModel
+from tmis.models import SelectorGuidedMultiPathModel
 
 
 def choose_device(name: str) -> torch.device:
@@ -24,12 +24,6 @@ def build_tokenizer_and_processor(cfg):
         local_files_only=bool(model_cfg.get("local_files_only", False)),
         use_fast=True,
     )
-    if not getattr(tokenizer, "is_fast", False):
-        raise RuntimeError(
-            "A fast T5 tokenizer is required because text-evidence supervision "
-            "depends on offset_mapping. Install sentencepiece and use the "
-            "google-t5/t5-large tokenizer files."
-        )
     if tokenizer.pad_token_id is None or tokenizer.eos_token_id is None:
         raise RuntimeError("T5 tokenizer must define pad_token_id and eos_token_id")
     tokenizer.add_special_tokens(BRIDGE_SPECIAL_TOKENS)
@@ -60,11 +54,9 @@ def build_collator(cfg, tokenizer, image_processor):
         image_processor=image_processor,
         max_text_length=d["max_text_length"],
         max_target_length=d["max_target_length"],
-        max_aux_text_length=d["max_aux_text_length"],
         max_bridge_length=d["max_bridge_length"],
-        strict_text_evidence_match=d["strict_text_evidence_match"],
     )
 
 
 def build_model(cfg, tokenizer):
-    return EvidenceAwareMultiPathModel(cfg, tokenizer)
+    return SelectorGuidedMultiPathModel(cfg, tokenizer)

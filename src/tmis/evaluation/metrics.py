@@ -4,26 +4,59 @@ from typing import Any
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score, precision_recall_fscore_support
 
+from tmis.constants import ID_TO_SENTIMENT
+
 
 TAG_NAMES = (
     "explicit_cue_present",
-    "implicit_reasoning_required",
+    "implicit_sentiment_present",
     "cross_modal_reasoning_required",
 )
 
 
-def _calc(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+def _calc(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, Any]:
     if len(y_true) == 0:
-        return {"n": 0, "accuracy": float("nan"), "macro_f1": float("nan")}
+        return {
+            "n": 0,
+            "accuracy": float("nan"),
+            "macro_f1": float("nan"),
+            "prediction_counts": {name: 0 for name in ID_TO_SENTIMENT.values()},
+            "per_class": {},
+        }
     p, r, f, _ = precision_recall_fscore_support(
         y_true, y_pred, average="macro", zero_division=0
     )
+    class_precision, class_recall, class_f1, support = (
+        precision_recall_fscore_support(
+            y_true,
+            y_pred,
+            labels=sorted(ID_TO_SENTIMENT),
+            average=None,
+            zero_division=0,
+        )
+    )
+    prediction_counts = {
+        ID_TO_SENTIMENT[class_id]: int(np.sum(y_pred == class_id))
+        for class_id in sorted(ID_TO_SENTIMENT)
+    }
+    per_class = {
+        ID_TO_SENTIMENT[class_id]: {
+            "precision": float(class_precision[position]),
+            "recall": float(class_recall[position]),
+            "f1": float(class_f1[position]),
+            "support": int(support[position]),
+            "predicted": prediction_counts[ID_TO_SENTIMENT[class_id]],
+        }
+        for position, class_id in enumerate(sorted(ID_TO_SENTIMENT))
+    }
     return {
         "n": int(len(y_true)),
         "accuracy": float(accuracy_score(y_true, y_pred)),
         "macro_precision": float(p),
         "macro_recall": float(r),
         "macro_f1": float(f),
+        "prediction_counts": prediction_counts,
+        "per_class": per_class,
     }
 
 
@@ -65,29 +98,3 @@ def compute_reasoning_tag_metrics(
         }
         f1s.append(float(f))
     return {"threshold": threshold, "macro_tag_f1": float(np.mean(f1s)), "per_tag": per_tag}
-
-
-def compute_text_evidence_token_metrics(
-    gold_labels: list[np.ndarray],
-    pred_probs: list[np.ndarray],
-    threshold: float = 0.5,
-) -> dict[str, Any]:
-    gold_flat: list[int] = []
-    pred_flat: list[int] = []
-    for gold, probs in zip(gold_labels, pred_probs):
-        gold = np.asarray(gold)
-        probs = np.asarray(probs)
-        mask = gold != -100
-        gold_flat.extend(gold[mask].astype(int).tolist())
-        pred_flat.extend((probs[mask] >= threshold).astype(int).tolist())
-    if not gold_flat:
-        return {"n_tokens": 0, "f1": float("nan")}
-    p, r, f, _ = precision_recall_fscore_support(
-        gold_flat, pred_flat, average="binary", zero_division=0
-    )
-    return {
-        "n_tokens": len(gold_flat),
-        "precision": float(p),
-        "recall": float(r),
-        "f1": float(f),
-    }

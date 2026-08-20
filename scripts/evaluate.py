@@ -34,6 +34,7 @@ from tmis.training import (
     move_batch,
     resolve_amp_dtype,
 )
+from tmis.training.provenance import summarize_training_judge
 from tmis.utils import load_checkpoint, write_json
 
 
@@ -42,6 +43,16 @@ def main() -> None:
     ap.add_argument("--config", default="configs/twitter2015.yaml")
     ap.add_argument("--output-dir", default=None)
     ap.add_argument("--checkpoint", default=None)
+    ap.add_argument(
+        "--result-tag",
+        default=None,
+        help="Write test_metrics_<tag>.json and test_predictions_<tag>.json.",
+    )
+    ap.add_argument(
+        "--also-write-canonical",
+        action="store_true",
+        help="Also update the compatibility test_metrics.json/test_predictions.json files.",
+    )
     ap.add_argument(
         "--bertscore",
         action="store_true",
@@ -59,7 +70,7 @@ def main() -> None:
     collator = build_collator(cfg, tokenizer, image_processor)
     model = build_model(cfg, tokenizer).to(device)
     ckpt = args.checkpoint or str(Path(cfg["output_dir"]) / "best_joint.pt")
-    load_checkpoint(ckpt, model, map_location=device)
+    checkpoint_meta = load_checkpoint(ckpt, model, map_location=device)
     model.eval()
     amp_dtype = resolve_amp_dtype(cfg["training"], device)
 
@@ -84,13 +95,12 @@ def main() -> None:
     with torch.no_grad():
         for raw in tqdm(loader, desc="test"):
             batch = move_batch(raw, device)
-            # STRICT inference path: no gold reasoning tags are mixed and no gold
-            # visual-evidence text is encoded into the prediction computation.
+            # STRICT inference path: gold reasoning tags and reference Bridges
+            # are never consumed by the prediction computation.
             with autocast_context(device, amp_dtype):
                 core = model.encode_and_reason(
                     batch,
                     routing_gold_mix=0.0,
-                    compute_visual_evidence_target=False,
                 )
                 ids = model.generate_bridge(core, cfg["evaluation"]["max_generation_length"])
                 mask = generated_attention_mask(ids, model.eos_id, tokenizer.pad_token_id)
@@ -115,7 +125,7 @@ def main() -> None:
                         "bridge_structure_error": parsed.error,
                         "sentiment": ID_TO_SENTIMENT[int(pred[j].item())],
                         "gold_sentiment": batch["gold_sentiments"][j],
-                        "implicit_reasoning_required": bool(batch["is_implicit"][j].item()),
+                        "implicit_sentiment_present": bool(batch["is_implicit"][j].item()),
                         "reference_reasoning_bridge": ref,
                         "route_probabilities": {
                             "explicit": float(core.tag_probs[j, 0].item()),
@@ -143,22 +153,51 @@ def main() -> None:
         compute_bertscore=use_bertscore,
         bertscore_model=bridge_cfg.get("bertscore_model"),
     )
+    judge_provenance = summarize_training_judge(cfg["output_dir"], cfg)
     metrics = {
+        "checkpoint": {
+            "name": Path(ckpt).name,
+            "stage": checkpoint_meta.get("stage"),
+            "epoch": checkpoint_meta.get("epoch"),
+            "selection_metric": checkpoint_meta.get("selection_metric"),
+            "selection_score": checkpoint_meta.get("selection_score"),
+        },
         "sentiment": sentiment_metrics,
         "bridge_structure": compute_structure_metrics(parsed_all),
         "bridge_reference": bridge_reference,
         "evaluation_protocol": {
-            "sentiment_inference_uses_gold_evidence": False,
+            "artificial_evidence_annotations_exist": False,
             "sentiment_inference_uses_gold_reasoning_tags": False,
             "sentiment_inference_uses_reference_bridge": False,
             "reference_bridge_used_only_for_offline_generation_metrics": True,
-            "llm_judge_called_during_training": False,
+            "llm_judge_called_during_training": judge_provenance[
+                "remote_api_called_during_training"
+            ],
+            "llm_judge_used_during_training": judge_provenance[
+                "used_during_training"
+            ],
+            "training_judge": judge_provenance,
         },
     }
 
     out = Path(cfg["output_dir"])
-    write_json(out / "test_metrics.json", metrics)
-    write_json(out / "test_predictions.json", predictions)
+    if args.result_tag is not None:
+        result_tag = str(args.result_tag).strip()
+        if not result_tag or any(
+            char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+            for char in result_tag
+        ):
+            raise ValueError("--result-tag may contain only letters, digits, _ and -")
+        metrics_path = out / f"test_metrics_{result_tag}.json"
+        predictions_path = out / f"test_predictions_{result_tag}.json"
+    else:
+        metrics_path = out / "test_metrics.json"
+        predictions_path = out / "test_predictions.json"
+    write_json(metrics_path, metrics)
+    write_json(predictions_path, predictions)
+    if args.also_write_canonical:
+        write_json(out / "test_metrics.json", metrics)
+        write_json(out / "test_predictions.json", predictions)
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
 
 

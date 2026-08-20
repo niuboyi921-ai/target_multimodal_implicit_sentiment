@@ -1,5 +1,5 @@
 # Reserved for Twitter-2017. Keep the model/training settings independent from Twitter-2015.
-experiment_name: twitter2017_evidence_multipath
+experiment_name: twitter2017_selector_multipath
 seed: 42
 device: auto
 output_dir: outputs/twitter2017
@@ -11,10 +11,8 @@ data:
   test_file: data/twitter2017/test.json
   image_dir: data/twitter2017/images
   image_extensions: [".jpg", ".jpeg", ".png", ".webp"]
-  strict_text_evidence_match: true
   max_text_length: 128
   max_target_length: 32
-  max_aux_text_length: 96
   max_bridge_length: 160
 
 model:
@@ -33,7 +31,16 @@ model:
   bridge_encoder_layers: 2
   bridge_min_tokens_per_field: 2
   text_gradient_checkpointing: true
-  vision_gradient_checkpointing: true
+  vision_gradient_checkpointing: false
+  freeze_text_backbone: true
+  freeze_vision_backbone: true
+  freeze_bridge_token_embeddings: true
+  lora:
+    enabled: true
+    rank: 8
+    alpha: 16
+    dropout: 0.10
+    target_modules: ["q", "v"]
   router_epsilon: 0.20
   router_alpha_explicit: 1.0
   router_alpha_implicit: 1.0
@@ -54,54 +61,107 @@ training:
   distributed_backend: nccl
   keep_stage_checkpoints: false
   use_class_balancing: true
+  # Effective-number class balancing; weights are normalized so E_train[w_y] = 1.
+  class_balance_beta: 0.999
   max_tag_pos_weight: 20.0
-  text_evidence_pos_weight: 3.0
-  text_evidence_focal_gamma: 2.0
-  visual_evidence_temperature: 0.07
-  visual_evidence_queue_size: 256
-  visual_presence_weight: 0.5
-  save_best_by: macro_f1
+  selector_text_min_ratio: 0.05
+  selector_text_max_ratio: 0.50
+  selector_visual_min_normalized_entropy: 0.20
+  selector_visual_max_normalized_entropy: 0.90
+  save_best_by: gated_full_implicit_macro_f1
   stage1_aux:
     enabled: true
     epochs: 3
     lr: 2.0e-5
-    backbone_lr_scale: 0.1
-    loss_weights: {text_evidence: 1.0, visual_evidence: 1.0, reasoning_tags: 1.0}
+    loss_weights: {reasoning_tags: 1.0, selector_regularization: 0.1}
   stage2_reasoning_warmup:
     enabled: true
     epochs: 2
-    lr: 1.0e-4
-    backbone_lr_scale: 0.1
+    lr: 5.0e-5
+    lora_lr_scale: 1.0
     routing_gold_mix_start: 0.8
     routing_gold_mix_end: 0.3
-    loss_weights: {bridge: 1.0, reasoning_tags: 0.5}
+    loss_weights: {bridge: 1.0, reasoning_tags: 0.5, selector_regularization: 0.05}
   stage3_bridge:
     enabled: true
     epochs: 4
-    lr: 8.0e-5
-    backbone_lr_scale: 0.1
-    # Select and restore best_bridge.pt from true autoregressive dev generation.
-    selection_metric: rouge_l_f1_full
+    lr: 5.0e-5
+    lora_lr_scale: 1.0
+    # Fixed-subset absolute Judge selection; ROUGE-L is only a tie-breaker.
+    checkpoint_selection:
+      sample_size: 64
+      sample_seed_offset: 53021
+      cache_filename: stage3_dev_absolute_judge_cache.jsonl
+      min_structure_valid_rate: 0.90
+      min_mean_dimension_score: 3.0
+      max_critical_error_rate: 0.20
     routing_gold_mix_start: 0.3
     routing_gold_mix_end: 0.0
-    loss_weights: {bridge: 1.0, text_evidence: 0.2, visual_evidence: 0.2, reasoning_tags: 0.2}
+    loss_weights: {bridge: 1.0, reasoning_tags: 0.2, selector_regularization: 0.05}
+    ai_feedback:
+      enabled: true
+      # Conservative v1 budget; tune after a small end-to-end run.
+      sample_size_per_epoch: 64
+      candidate_count: 2
+      sampling_temperature: 0.8
+      top_p: 0.9
+      request_timeout_seconds: 120
+      max_retries: 3
+      image_max_side: 768
+      cache_filename: stage3_bailian_judge_cache.jsonl
+      primary_judge:
+        model: qwen3.7-plus-2026-05-26
+        enable_thinking: true
+        temperature: 0.0
+      review_judge:
+        model: qwen3.8-max
+        enable_thinking: true
+        temperature: 0.0
+      review_rules:
+        random_audit_ratio: 0.10
+        review_cross_modal: true
+        review_order_inconsistent: true
+        review_low_margin: true
+        low_margin_threshold: 0.50
+        absolute_low_score_threshold: 2
+      quality_gate:
+        min_faithfulness: 3
+        min_reasoning_coherence: 3
+        min_target_consistency: 3
+        min_total_score: 10
+        max_generation_attempts: 3
+      dpo:
+        enabled: true
+        epochs: 1
+        batch_size: 1
+        grad_accum_steps: 4
+        lr: 1.0e-5
+        beta: 0.1
+        reference_ce_weight: 0.2
+        length_normalize_logps: false
   stage4_classifier:
     enabled: true
     epochs: 3
     lr: 1.0e-4
-    backbone_lr_scale: 0.1
     loss_weights: {sentiment: 1.0}
   stage5_joint:
     enabled: true
     # 25% -> 50% -> 75% -> 100% generated Bridge adaptation.
     epochs: 4
-    lr: 2.0e-5
-    backbone_lr_scale: 0.1
+    lr: 1.0e-5
+    lora_lr_scale: 1.0
     routing_gold_mix_start: 0.0
     routing_gold_mix_end: 0.0
     generated_bridge_ratio_start: 0.25
     generated_bridge_ratio_end: 1.0
-    loss_weights: {text_evidence: 0.5, visual_evidence: 0.5, reasoning_tags: 0.5, bridge: 1.0, sentiment: 1.0}
+    selection:
+      full_macro_f1_weight: 0.40
+      implicit_macro_f1_weight: 0.60
+      min_predictions_per_class: 1
+      min_negative_recall: 0.01
+      max_implicit_macro_f1_drop: 0.02
+      min_bridge_structure_valid_rate: 0.90
+    loss_weights: {reasoning_tags: 0.5, selector_regularization: 0.05, bridge: 1.0, sentiment: 1.0}
 
 evaluation:
   report_subsets: ["full", "implicit", "non_implicit"]
@@ -114,6 +174,6 @@ evaluation:
     bertscore_model: null
   llm_judge:
     enabled: false
-    # LLM judge is an offline post-training evaluator only. Never call it inside training.
+    # Separate optional post-training evaluator; Stage-3 DPO is configured above.
     model: null
     base_url: null

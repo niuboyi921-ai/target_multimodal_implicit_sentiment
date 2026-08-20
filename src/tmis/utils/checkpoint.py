@@ -16,7 +16,17 @@ def save_checkpoint(
     meta=None,
 ) -> None:
     """Atomically write a restartable checkpoint on the same filesystem."""
-    state = {"model": model.state_dict(), "meta": meta or {}}
+    if hasattr(model, "checkpoint_state_dict"):
+        model_state = model.checkpoint_state_dict()
+        model_state_format = str(model.checkpoint_state_format)
+    else:
+        model_state = model.state_dict()
+        model_state_format = "full_v1"
+    state = {
+        "model": model_state,
+        "model_state_format": model_state_format,
+        "meta": meta or {},
+    }
     if optimizer is not None:
         state["optimizer"] = optimizer.state_dict()
     if scheduler is not None:
@@ -46,7 +56,17 @@ def load_checkpoint(
     state = torch.load(path, map_location=map_location, weights_only=True)
     if not isinstance(state, dict) or "model" not in state:
         raise ValueError(f"invalid checkpoint format: {path}")
-    model.load_state_dict(state["model"], strict=True)
+    state_format = state.get("model_state_format", "legacy_full")
+    if hasattr(model, "load_checkpoint_state_dict"):
+        expected = str(model.checkpoint_state_format)
+        if state_format != expected:
+            raise ValueError(
+                f"checkpoint {path} uses {state_format!r}, but the current "
+                f"parameter-efficient architecture requires {expected!r}; start a new run"
+            )
+        model.load_checkpoint_state_dict(state["model"])
+    else:
+        model.load_state_dict(state["model"], strict=True)
     for name, target in (
         ("optimizer", optimizer),
         ("scheduler", scheduler),

@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 from transformers import CLIPVisionModel, T5ForConditionalGeneration
 
+from tmis.models.lora import inject_lora
+
 
 def masked_mean(x: torch.Tensor, mask: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     mask = mask.to(x.dtype).unsqueeze(-1)
@@ -13,8 +15,8 @@ def masked_mean(x: torch.Tensor, mask: torch.Tensor, eps: float = 1e-6) -> torch
 class TextTargetEncoder(nn.Module):
     """Shared T5-large encoder/decoder backbone.
 
-    The encoder is called separately for the tweet, target, and optional
-    auxiliary evidence text. The same pretrained T5 decoder is later reused by
+    The encoder is called separately for the tweet and target. The same
+    pretrained T5 decoder is later reused by
     the reasoning-bridge generator, so the project loads only one T5-large.
     """
 
@@ -23,6 +25,7 @@ class TextTargetEncoder(nn.Module):
         model_name: str,
         tokenizer_size: int,
         gradient_checkpointing: bool = False,
+        lora_config: dict | None = None,
         revision: str | None = None,
         local_files_only: bool = False,
     ) -> None:
@@ -36,8 +39,31 @@ class TextTargetEncoder(nn.Module):
         self.backbone.resize_token_embeddings(tokenizer_size)
         self.hidden_size = int(self.backbone.config.d_model)
         self.backbone.config.use_cache = False
+        for parameter in self.backbone.parameters():
+            parameter.requires_grad = False
+        self.lora_module_names: tuple[str, ...] = ()
+        if lora_config and bool(lora_config.get("enabled", False)):
+            self.lora_module_names = inject_lora(
+                self.backbone,
+                target_modules=lora_config.get("target_modules", ["q", "v"]),
+                rank=int(lora_config.get("rank", 8)),
+                alpha=float(lora_config.get("alpha", 16)),
+                dropout=float(lora_config.get("dropout", 0.1)),
+            )
+        self._lora_input_gradients_enabled = False
         if gradient_checkpointing:
             self.backbone.gradient_checkpointing_enable()
+
+    def set_lora_input_gradients(self, enabled: bool) -> None:
+        """Support LoRA gradients through a checkpointed frozen T5 embedding."""
+        enabled = bool(enabled and self.lora_module_names)
+        if enabled == self._lora_input_gradients_enabled:
+            return
+        if enabled:
+            self.backbone.enable_input_require_grads()
+        else:
+            self.backbone.disable_input_require_grads()
+        self._lora_input_gradients_enabled = enabled
 
     def _encode(
         self,
@@ -90,6 +116,8 @@ class VisionEncoder(nn.Module):
         self.hidden_size = self.backbone.config.hidden_size
         if gradient_checkpointing and hasattr(self.backbone, "gradient_checkpointing_enable"):
             self.backbone.gradient_checkpointing_enable()
+        for parameter in self.backbone.parameters():
+            parameter.requires_grad = False
 
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
         return self.backbone(pixel_values=pixel_values).last_hidden_state

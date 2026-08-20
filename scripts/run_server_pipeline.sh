@@ -48,8 +48,23 @@ else
   python "${TRAIN_ARGS[@]}" 2>&1 | tee "$CONSOLE_LOG"
 fi
 
-python scripts/evaluate.py --config "$CONFIG" --output-dir "$OUTPUT_DIR" 2>&1 | tee -a "$CONSOLE_LOG"
-python scripts/evaluate_auxiliary.py --config "$CONFIG" --output-dir "$OUTPUT_DIR" 2>&1 | tee -a "$CONSOLE_LOG"
+python scripts/evaluate.py \
+  --config "$CONFIG" \
+  --output-dir "$OUTPUT_DIR" \
+  --checkpoint "$OUTPUT_DIR/best_joint.pt" \
+  --result-tag best_joint \
+  --also-write-canonical 2>&1 | tee -a "$CONSOLE_LOG"
+python scripts/evaluate.py \
+  --config "$CONFIG" \
+  --output-dir "$OUTPUT_DIR" \
+  --checkpoint "$OUTPUT_DIR/stage5_generated_only.pt" \
+  --result-tag generated_only 2>&1 | tee -a "$CONSOLE_LOG"
+python scripts/compare_checkpoint_evaluations.py \
+  --output-dir "$OUTPUT_DIR" 2>&1 | tee -a "$CONSOLE_LOG"
+python scripts/evaluate_auxiliary.py \
+  --config "$CONFIG" \
+  --output-dir "$OUTPUT_DIR" \
+  --checkpoint "$OUTPUT_DIR/best_joint.pt" 2>&1 | tee -a "$CONSOLE_LOG"
 tail -n 5000 "$CONSOLE_LOG" > "$OUTPUT_DIR/console_tail.txt"
 
 python scripts/export_training_report.py \

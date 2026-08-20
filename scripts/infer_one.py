@@ -52,8 +52,8 @@ def main():
     with Image.open(args.image) as im:
         image = im.convert("RGB")
 
-    # Collator schema contains supervision slots, but they are empty placeholders
-    # here. The strict inference call below does not use gold evidence/tags/bridge.
+    # Reasoning tags are training labels only. Placeholder values are required
+    # by the shared collator but are not mixed into strict inference routing.
     sample = {
         "index": 0,
         "restored_text": args.text,
@@ -62,11 +62,9 @@ def main():
         "image_name": Path(args.image).name,
         "sentiment": "neutral",
         "sentiment_id": 1,
-        "text_evidence": [],
-        "visual_evidence": [],
         "reasoning_tags": {
             "explicit_cue_present": False,
-            "implicit_reasoning_required": False,
+            "implicit_sentiment_present": False,
             "cross_modal_reasoning_required": False,
         },
         "reasoning_bridge": None,
@@ -78,7 +76,6 @@ def main():
             core = model.encode_and_reason(
                 batch,
                 routing_gold_mix=0.0,
-                compute_visual_evidence_target=False,
             )
             ids = model.generate_bridge(core, cfg["evaluation"]["max_generation_length"])
             mask = generated_attention_mask(ids, model.eos_id, tokenizer.pad_token_id)

@@ -15,8 +15,6 @@ class NormalizedRecord:
     image: str
     sentiment: str
     source_dataset: str
-    text_evidence: list[str]
-    visual_evidence: list[str]
     reasoning_tags: dict[str, bool]
     reasoning_bridge: dict[str, str] | None
     raw: dict[str, Any]
@@ -27,11 +25,11 @@ class NormalizedRecord:
 
     @property
     def is_implicit(self) -> bool:
-        return self.reasoning_tags["implicit_reasoning_required"]
+        return self.reasoning_tags["implicit_sentiment_present"]
 
 
 def _strip_preserve_internal(value: Any) -> str:
-    """Strip only outer whitespace; keep internal spacing for exact evidence spans."""
+    """Strip only outer whitespace while preserving the original tweet text."""
     return str(value or "").strip()
 
 
@@ -42,42 +40,6 @@ def _norm_scalar(value: Any) -> str:
 def _norm_semantic_text(value: Any) -> str:
     # Bridge/visual evidence does not need source-character offsets.
     return " ".join(str(value or "").split())
-
-
-def _exact_text_evidence_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        value = [value]
-    if not isinstance(value, list):
-        raise TypeError(f"text_evidence must be list[str], got {type(value).__name__}")
-    out: list[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            raise TypeError("text_evidence items must be strings")
-        # Preserve internal spaces because text_evidence is defined as an exact
-        # contiguous substring of restored_text.
-        text = item.strip()
-        if text:
-            out.append(text)
-    return out
-
-
-def _semantic_list(value: Any, field_name: str) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        value = [value]
-    if not isinstance(value, list):
-        raise TypeError(f"{field_name} must be list[str], got {type(value).__name__}")
-    out: list[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            raise TypeError(f"{field_name} items must be strings")
-        text = _norm_semantic_text(item)
-        if text:
-            out.append(text)
-    return out
 
 
 def _strict_bool(value: Any, *, field_name: str, record_index: int) -> bool:
@@ -109,13 +71,22 @@ def normalize_record(record: dict[str, Any], index: int) -> NormalizedRecord:
     if sentiment not in SENTIMENT_TO_ID:
         raise ValueError(f"record {index}: invalid sentiment={sentiment!r}")
 
+    legacy_evidence = [
+        name for name in ("text_evidence", "visual_evidence") if name in record
+    ]
+    if legacy_evidence:
+        raise ValueError(
+            f"record {index}: legacy artificial evidence fields are not supported: "
+            f"{legacy_evidence}; run scripts/remove_evidence_supervision.py"
+        )
+
     tags_raw = record.get("reasoning_tags")
     if not isinstance(tags_raw, dict):
         raise TypeError(f"record {index}: reasoning_tags must be an object")
 
     required_tags = (
         "explicit_cue_present",
-        "implicit_reasoning_required",
+        "implicit_sentiment_present",
         "cross_modal_reasoning_required",
     )
     missing = [k for k in required_tags if k not in tags_raw]
@@ -126,6 +97,17 @@ def normalize_record(record: dict[str, Any], index: int) -> NormalizedRecord:
         key: _strict_bool(tags_raw[key], field_name=f"reasoning_tags.{key}", record_index=index)
         for key in required_tags
     }
+    if tags["implicit_sentiment_present"] and sentiment == "neutral":
+        raise ValueError(
+            f"record {index}: implicit_sentiment_present=true requires positive or negative sentiment"
+        )
+    if sentiment != "neutral" and not (
+        tags["explicit_cue_present"] or tags["implicit_sentiment_present"]
+    ):
+        raise ValueError(
+            f"record {index}: positive/negative sentiment requires at least one of "
+            "explicit_cue_present or implicit_sentiment_present to be true; both may be true"
+        )
 
     bridge_raw = record.get("reasoning_bridge")
     bridge: dict[str, str] | None = None
@@ -141,14 +123,6 @@ def normalize_record(record: dict[str, Any], index: int) -> NormalizedRecord:
         if any(not bridge[k] for k in BRIDGE_KEYS):
             raise ValueError(f"record {index}: reasoning_bridge missing/empty one of {BRIDGE_KEYS}")
 
-    text_evidence = _exact_text_evidence_list(record.get("text_evidence"))
-    for ev in text_evidence:
-        if ev not in restored_text:
-            raise ValueError(
-                f"record {index}: text_evidence must be an exact contiguous substring "
-                f"of restored_text: {ev!r}"
-            )
-
     return NormalizedRecord(
         index=index,
         text=text,
@@ -157,8 +131,6 @@ def normalize_record(record: dict[str, Any], index: int) -> NormalizedRecord:
         image=image,
         sentiment=sentiment,
         source_dataset=source_dataset,
-        text_evidence=text_evidence,
-        visual_evidence=_semantic_list(record.get("visual_evidence"), "visual_evidence"),
         reasoning_tags=tags,
         reasoning_bridge=bridge,
         raw=record,

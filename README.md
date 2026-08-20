@@ -1,4 +1,4 @@
-# 基于证据感知多路径推理的目标级多模态隐式情感分析
+# 基于目标感知模态选择与多路径推理的目标级多模态隐式情感分析
 
 本项目实现当前实验设计的完整训练与测试流程。Twitter-2015 和 Twitter-2017 **严格分开训练、分开评测**；当前可先将处理完成的 Twitter-2015 数据放入对应目录运行，Twitter-2017 目录和配置已经预留。
 
@@ -33,8 +33,11 @@ target_multimodal_implicit_sentiment/
 │   └── sample_record.json        # 仅用于 smoke test 的合成样例
 ├── scripts/
 │   ├── validate_data.py
+│   ├── remove_evidence_supervision.py
+│   ├── restore_explicit_implicit_cooccurrence.py
 │   ├── train.py
 │   ├── evaluate.py
+│   ├── evaluate_auxiliary.py
 │   ├── export_training_report.py
 │   ├── validate_training_report.py
 │   ├── run_server_pipeline.sh
@@ -53,7 +56,7 @@ target_multimodal_implicit_sentiment/
 │   ├── models/
 │   │   ├── encoders.py
 │   │   ├── conditioning.py
-│   │   ├── evidence.py
+│   │   ├── selectors.py
 │   │   ├── reasoning.py
 │   │   ├── bridge.py
 │   │   └── model.py
@@ -92,10 +95,10 @@ image ────────→ CLIP ViT-L/14 ──→ H_v
               ┌──────────┼──────────┐
               │          │          │
               ▼          ▼          ▼
-       Evidence Heads   Reasoning Tags   Cross-modal Head
-         H_te, H_ve       p_e,p_i,p_c        H_relation
-                \             |             /
-                 \            |            /
+       Latent Selectors  Reasoning Tags
+         H_ts, H_vs       p_e,p_i,p_c
+                \             |
+                 \            |
                    Three Reasoning Paths
                        │
        ┌───────────────┼────────────────┐
@@ -117,11 +120,34 @@ image ────────→ CLIP ViT-L/14 ──→ H_v
               Sentiment Classifier
 ```
 
-文本、目标和辅助 evidence 文本复用同一个 T5-large encoder；reasoning bridge 复用同一模型的预训练 T5 decoder、共享词嵌入和 LM head。项目不会额外加载第二套 T5-large。图像编码器为 `openai/clip-vit-large-patch14`，T5/CLIP 输出再投影到配置中的统一多模态维度。
+三条路径具有明确的模态边界，融合表示 `H_f` 不直接进入任何单条
+reasoning path：
+
+```text
+Direct Path   = PathMLP(H_text_selected, h_target)
+Implicit Path = PathMLP(H_text_selected, H_text_global, h_target)
+Cross Path    = PathMLP(H_text_selected, H_visual_selected,
+                        |H_text_selected - H_visual_selected|,
+                        H_text_selected * H_visual_selected,
+                        h_target)
+```
+
+其中 `H_text_global` 是目标条件化文本 token 的掩码平均池化，只提供完整
+文本上下文，不包含视觉信息。`H_f` 仍用于指导两个潜在选择器，并在
+Cross-Path Interaction 中作为全局门控残差锚点。Cross Path
+直接使用固定的差值和逐元素乘积比较两种选择表示，不再创建缺乏独立监督的
+`H_relation`。
+
+文本与目标复用同一个 T5-large encoder；reasoning bridge 复用同一模型的预训练 T5 decoder、共享词嵌入和 LM head。项目不会额外加载第二套 T5-large。图像编码器为 `openai/clip-vit-large-patch14`，T5/CLIP 输出再投影到配置中的统一多模态维度。文本/视觉选择器是没有人工 Evidence 答案的潜在模块，通过 reasoning tags、Bridge 生成和防坍缩正则联合训练。
+
+由于 Twitter-2015 训练集只有 3,016 条，T5-large 与 CLIP ViT-L/14 的
+预训练基座在所有阶段都保持冻结。T5 的 encoder/decoder 注意力 `q/v` 投影加入
+rank-8 LoRA；CLIP 不添加 LoRA，视觉适配由 `vision_proj`、目标条件化和视觉
+选择器完成。这样保留大模型表征能力，但不会用小数据全参数微调约十亿参数。
 
 Bridge 使用自定义 `<BRIDGE_BOS>` 与三个字段 marker，但结束符复用 T5 原生 `</s>`，避免重新学习第二套 EOS 语义。
 
-最终分类器**不读取** `H_f`、证据表示、reasoning tags、路径表示或图像/文本特征，只读取模型生成的 reasoning bridge token 序列。因此最终预测链保持：
+最终分类器**不读取** `H_f`、选择器表示、reasoning tags、路径表示或图像/文本特征，只读取模型生成的 reasoning bridge token 序列。因此最终预测链保持：
 
 ```text
 多模态输入 → 推理 → reasoning_bridge → sentiment
@@ -154,11 +180,9 @@ JSON 根节点可以是：
   "targe": "...",
   "image": "...",
   "sentiment": "positive|neutral|negative",
-  "text_evidence": ["..."],
-  "visual_evidence": ["..."],
   "reasoning_tags": {
     "explicit_cue_present": false,
-    "implicit_reasoning_required": true,
+    "implicit_sentiment_present": true,
     "cross_modal_reasoning_required": true
   },
   "reasoning_bridge": {
@@ -169,13 +193,14 @@ JSON 根节点可以是：
 }
 ```
 
-其中 `text_evidence` 按当前数据设计必须是 `restored_text` 中的精确连续子串。默认配置会在训练前严格检查。
+数据不再包含 `text_evidence`、`visual_evidence` 人工字段。旧数据可以运行
+`python scripts/remove_evidence_supervision.py` 完成一次性迁移；校验器会拒绝仍含旧字段的数据，避免新旧监督方案混用。
 
 `reasoning_bridge` 缺失的样本不会从最终测试集删除：
 
-- Stage 1 可继续用于 evidence/tags 辅助训练；
+- Stage 1 可继续用于 reasoning tags 与潜在选择器预训练；
 - Stage 2–4 中需要 reference bridge 的训练步骤只选择存在 bridge 的训练样本；
-- Stage 3 的最佳 Bridge checkpoint 需要开发集中至少存在一条 reference bridge，否则无法计算选优指标，训练器会明确报错；
+- Stage 3 的最佳 Bridge checkpoint 由固定开发子集的绝对质量 Judge 选择，不依赖 reference bridge；已有 reference 只用于离线 ROUGE-L 辅助报告和同分 tie-break；
 - Stage 5 与最终测试使用模型自己生成的 bridge，因此最终 sentiment evaluation 仍可覆盖完整测试集。
 
 ## 4. 安装
@@ -196,9 +221,16 @@ python scripts/validate_data.py --config configs/twitter2015.yaml
 python scripts/validate_data.py --config configs/twitter2017.yaml
 ```
 
-首次运行会通过 Hugging Face 下载 `google-t5/t5-large` 与 `openai/clip-vit-large-patch14`，配置已固定两个模型仓库 revision 并优先加载 safetensors，避免服务器在不同日期静默得到不同权重。离线服务器可先缓存模型，再设置 `model.local_files_only: true`。该组合远大于旧的 BERT-base + CLIP ViT-B/32；默认配置已将单卡 batch 调整为 1、梯度累积调整为 16，开启两个 backbone 的 gradient checkpointing，并使用 Adafactor 降低优化器状态显存。
+首次运行会通过 Hugging Face 下载 `google-t5/t5-large` 与 `openai/clip-vit-large-patch14`，配置已固定两个模型仓库 revision 并优先加载 safetensors，避免服务器在不同日期静默得到不同权重。离线服务器可先缓存模型，再设置 `model.local_files_only: true`。该组合远大于旧的 BERT-base + CLIP ViT-B/32；默认配置已将单卡 batch 调整为 1、梯度累积调整为 16，并使用原生 LoRA 与 Adafactor 降低可训练参数和优化器状态。
 
 本架构与旧 BERT/CLIP-B/32 checkpoint 的参数名、隐藏维度和 tokenizer 均不兼容，必须从新的 T5-large/CLIP-L/14 预训练权重重新开始训练。
+
+本次去除人工 Evidence 监督后，选择器与 Tag Head 的参数结构也已变化；此前 evidence-supervised 训练生成的 `best_joint.pt`、`latest.pt` 等 checkpoint 不能用于续训或新架构评测，必须启动新的 run-id 从 Stage 1 重新训练。
+
+加入 LoRA 后 checkpoint 参数名与保存格式再次发生变化：checkpoint 只保存
+LoRA、Bridge 和任务模块，不重复保存可从固定 revision 重新加载的 T5/CLIP
+预训练权重，也不重复保存从 T5 复制且保持冻结的 Bridge token embedding。
+因此所有旧训练 checkpoint 都不能续训，必须使用新的 run-id。
 
 ## 5. 训练前检查
 
@@ -214,7 +246,7 @@ python scripts/validate_data.py --config configs/twitter2015.yaml
 - sentiment 值；
 - target/restored_text/image 是否存在；
 - 图片文件是否可解析；
-- `text_evidence` 是否为精确连续子串；
+- 是否残留已删除的人工 Evidence 字段；
 - reasoning tags；
 - reasoning bridge 三字段结构；
 - positive / neutral / negative 数量；
@@ -224,10 +256,15 @@ python scripts/validate_data.py --config configs/twitter2015.yaml
 隐式子集仅由：
 
 ```text
-reasoning_tags.implicit_reasoning_required == true
+reasoning_tags.implicit_sentiment_present == true
 ```
 
-确定。`explicit_cue_present` 与 `cross_modal_reasoning_required` 不参与隐式/非隐式定义。
+确定。该字段仅允许用于 positive/negative 样本，但可以与
+`explicit_cue_present` 同时为 `true`，例如表面存在明确评价词、完整含义仍需反讽或
+语境推理的样本。对 positive/negative 样本，两者至少一个为 `true`；中性样本允许
+两者同时为 `false`。`explicit_cue_present=true` 还要求明确的
+情感/评价表达直接指向当前目标，不能把针对其他实体或整体场景的线索归给当前目标。
+`cross_modal_reasoning_required` 不参与隐式/非隐式定义。
 
 ## 6. 五阶段训练
 
@@ -237,12 +274,15 @@ reasoning_tags.implicit_reasoning_required == true
 python scripts/train.py --config configs/twitter2015.yaml
 ```
 
-单机多卡使用 PyTorch DDP（每张 GPU 一个进程）：
+第一版阿里云百炼 Judge + DPO 采用单进程训练，以避免多个训练进程重复调用
+远程裁判并产生不同步的偏好更新：
 
 ```bash
-torchrun --standalone --nproc_per_node=4 scripts/train.py \
-  --config configs/twitter2015.yaml
+python scripts/train.py --config configs/twitter2015.yaml
 ```
+
+当 `stage3_bridge.ai_feedback.enabled: true` 时必须保持
+`NPROC_PER_NODE=1`。关闭该选项后，其余五阶段代码仍可使用原有 DDP。
 
 训练器会在每轮结束后原子更新 `outputs/twitter2015/latest.pt`，其中包含模型、优化器、学习率调度器和 AMP scaler 状态。服务器中断后可继续：
 
@@ -252,7 +292,7 @@ python scripts/train.py \
   --resume outputs/twitter2015/latest.pt
 ```
 
-默认混合精度为 `auto`：支持 BF16 的 CUDA GPU 使用 BF16，否则 CUDA 使用 FP16，CPU 回退 FP32。若显存仍不足，可以在某一阶段设置 `train_text_backbone: false` 或 `train_vision_backbone: false`，只训练该阶段的新模块。
+默认混合精度为 `auto`：支持 BF16 的 CUDA GPU 使用 BF16，否则 CUDA 使用 FP16，CPU 回退 FP32。配置校验器强制 `freeze_text_backbone: true`、`freeze_vision_backbone: true` 和 `freeze_bridge_token_embeddings: true`；任何阶段如果意外解冻 T5 基座、CLIP 或 Bridge token embedding，训练器会立即报错。
 
 每次正式实验应指定唯一 `run-id` 和独立输出目录，避免旧实验文件混入新报告：
 
@@ -267,19 +307,19 @@ python scripts/train.py \
 
 程序按顺序执行：
 
-### Stage 1 — 辅助监督预训练
+### Stage 1 — Reasoning Tags 与潜在选择器预训练
 
-训练目标条件编码、多模态融合、文本证据头、视觉证据头和 reasoning tags head。
+冻结 T5-large 和 CLIP ViT-L/14，只训练投影、目标条件化、多模态融合、目标感知文本/视觉选择器和 reasoning tags head。Tag Head 显式读取两个选择器的表示，使标签损失能够向选择器反向传播。
 
 ```text
-L_stage1 = λ_te L_text_evidence
-         + λ_ve L_visual_evidence
-         + λ_tag L_reasoning_tags
+L_stage1 = λ_tag L_reasoning_tags
+         + λ_sel L_selector_regularization
 ```
 
-- Text Evidence：token-level BCE；标签由精确 `text_evidence` 子串自动映射得到；
-- Visual Evidence：不使用 bounding box，使用目标条件视觉证据表示与已验证 `visual_evidence` 文本表示之间的语义对齐/对比损失；
-- Reasoning Tags：三个独立 sigmoid + BCE。
+- Text Selector：在目标条件文本 token 上学习软选择；
+- Visual Selector：在目标条件 CLIP patch 上学习软选择，并显式排除全局 CLS token，避免选择器通过全局图像表示绕过区域定位；
+- Selector Regularization：约束文本选择比例和视觉注意力归一化熵，防止全选、全不选、完全均匀或单 patch 坍缩；
+- Reasoning Tags：三个独立 sigmoid + BCE，并通过 selector-aware Tag Head 为两个选择器提供语义梯度。
 
 ### Stage 2 — 多路径推理 warm-up
 
@@ -297,6 +337,8 @@ p_route = λ * gold_tag + (1-λ) * predicted_probability
 
 随后 λ 逐步降低。为了使三条推理路径在没有额外 path-level 人工标签的前提下得到实际语义训练，本实现用 reference reasoning bridge 的生成损失作为 reasoning-path warm-up 的监督信号，同时保留 tag loss；不会增加一个可绕过 bridge 的上游 sentiment head。
 
+本阶段开始启用 T5 rank-8 LoRA；T5 原始权重与整个 CLIP 仍然冻结。投影、条件化、选择器、Tag Head、多路径推理和 Bridge Adapter 保持可训练。
+
 ### Stage 3 — Reasoning Bridge Generator
 
 将 reference bridge 序列化为：
@@ -307,13 +349,62 @@ p_route = λ * gold_tag + (1-λ) * predicted_probability
 [IMPLICATION] evaluative_implication
 ```
 
-采用与文本编码器同源的预训练 T5-large decoder，通过 teacher forcing 学习。五个多模态 memory token 会先从融合维度投影到 T5 `d_model`，再作为 `encoder_outputs` 供 T5 decoder 交叉注意力读取：
+采用与文本编码器同源的预训练 T5-large decoder，通过 teacher forcing 学习。四个多模态 memory token（reasoning/text-selected/visual-selected/target）会先从融合维度投影到 T5 `d_model`，再作为 `encoder_outputs` 供 T5 decoder 交叉注意力读取：
 
 ```text
 P(S,R,E) = P(S) P(R|S) P(E|S,R)
 ```
 
-每个 Stage 3 epoch 结束后，开发集会关闭 gold routing，并由模型真实自回归生成完整 Bridge。程序记录结构合法率与 reference ROUGE-L，默认按完整 Bridge 的 ROUGE-L F1 保存 `best_bridge.pt`；Stage 3 结束后会自动恢复该最佳权重，再进入 Stage 4。Reference Bridge 在这里仅作为评价目标，不作为 decoder 输入。
+每个 Stage 3 epoch 结束后，开发集会关闭 gold routing，并由模型真实自回归生成完整 Bridge。程序记录结构合法率与 reference ROUGE-L，并在固定开发子集上调用绝对质量 Judge；只有通过结构、三维均分和严重错误率门槛的 epoch 才能参与 `best_bridge.pt` 选优。Stage 3 结束后会自动恢复最佳权重，再进入 Stage 4。Reference Bridge 仅作为离线评价目标和同分 tie-break，不作为 decoder 输入，也不是主要选优信号。
+
+第一版还会在每轮 teacher-forcing 之后增加一次半在线偏好优化：
+
+1. 默认从训练集固定抽样 64 条记录，每条用当前模型采样 2 个结构化 Bridge；
+2. `qwen3.7-plus-2026-05-26` 同时读取原文、当前目标、原图和两个候选，按
+   忠实性、推理连贯性、目标一致性做成对比较；
+3. 主裁判交换 A/B 顺序再判断一次，用于发现顺序偏置；跨模态样本、低分差、
+   顺序不一致样本和确定性随机抽取的 10% 样本交给 `qwen3.8-max` 复核；
+4. 最终胜负写入本地 JSONL 缓存，并用 DPO 提高胜者 Bridge 的相对概率；同时
+   保留少量 reference Bridge 交叉熵作为稳定锚点。
+
+DPO 的小规模偏好集只更新 T5 LoRA 和 Bridge Adapter，不更新完整 T5、CLIP
+或整个多模态前端，降低 64 条 Judge 样本导致过拟合的风险。
+
+裁判请求**不会发送** gold sentiment、gold reasoning tags 或 reference Bridge，
+因此不会把答案泄露给偏好判断。远程模型返回的是离散偏好数据；它本身不参与
+PyTorch 反向传播，DPO 梯度只来自本地 T5 对 chosen/rejected Bridge 的
+log-probability。Reference ROUGE-L 只用于 Stage-3 同分 tie-break 与报告，
+不再决定 DPO 的候选胜负。
+
+64×2 是控制第一版时延与费用的保守默认值，不是论文结论；先完成一次小规模
+端到端运行并审计裁判一致性后，再调整 `sample_size_per_epoch` 和
+`candidate_count`。原文和图片会发送到阿里云百炼，请在正式运行前确认数据
+授权、隐私要求、账号额度和调用限流。
+
+#### 百炼 API 填写位置
+
+首次 clone 后复制本地凭据模板：
+
+```bash
+cp src/tmis/bailian_credentials_template.py \
+   src/tmis/bailian_credentials_local.py
+```
+
+然后只编辑下面这个本地代码文件：
+
+```text
+src/tmis/bailian_credentials_local.py
+```
+
+将：
+
+```python
+BAILIAN_API_KEY = "PASTE_YOUR_BAILIAN_API_KEY_HERE"
+```
+
+替换成自己的百炼 API Key。`BAILIAN_BASE_URL` 已默认填写为百炼的
+OpenAI-compatible 地址。该本地文件已经加入 `.gitignore`，不会上传到 GitHub；
+项目也不会从环境变量读取这把密钥。请勿把真实密钥写入两个 YAML 或模板文件。
 
 ### Stage 4 — Bridge Encoder + Sentiment Classifier
 
@@ -330,31 +421,55 @@ reasoning_bridge → Bridge Encoder → positive/neutral/negative
 联合优化：
 
 ```text
-L_total = λ1 L_text_evidence
-        + λ2 L_visual_evidence
-        + λ3 L_tags
-        + λ4 L_bridge
-        + λ5 L_sentiment
+L_total = λ1 L_selector_regularization
+        + λ2 L_tags
+        + λ3 L_bridge
+        + λ4 L_sentiment
 ```
 
 分类器训练逐步混入模型生成 bridge。由于生成 token 是离散序列，`L_sentiment` **不会伪装成能够普通反向传播穿过 argmax 生成过程**：
 
 - sentiment loss 更新 Bridge Encoder / classifier；
-- 上游多模态与推理模块由 evidence/tag/bridge generation losses 更新；
+- 上游多模态与推理模块由 selector regularization、tag 和 bridge generation losses 更新；
 - 这与真实推理时“先生成 bridge，再分类”的计算路径一致。
 
-默认 Stage 5 使用四个 epoch，将 Generated Bridge 比例依次调整为 `25% → 50% → 75% → 100%`。训练器会强制最后一轮为 100%，并额外保存 `stage5_generated_only.pt`；`best_joint.pt` 仍按开发集 Macro-F1 选择，两者含义不会混淆。
+这里的“联合”不再表示全参数解冻。Stage 5 只训练：
+
+```text
+T5 LoRA
++ 投影/条件化/融合/选择器
++ Tag Head/三条推理路径/Bridge Adapter
++ Bridge Encoder 与 Sentiment Classifier
+```
+
+T5-large 原始参数和 CLIP ViT-L/14 原始参数始终为零个可训练参数；Stage 5
+学习率降低为 `1e-5`。每轮日志会同时写入总参数、可训练参数、LoRA 参数、任务
+参数、T5-base 可训练参数和 CLIP 可训练参数，后两项必须为 0。
+
+默认 Stage 5 使用四个 epoch，将 Generated Bridge 比例依次调整为 `25% → 50% → 75% → 100%`。训练器会强制最后一轮为 100%，并额外保存 `stage5_generated_only.pt`。`best_joint.pt` 使用 `0.4 × Full Macro-F1 + 0.6 × Implicit Macro-F1` 选优，并设置类别覆盖、负类召回、隐式子集退化和 Bridge 结构有效率硬门槛；未通过门槛的 epoch 没有资格成为最佳 checkpoint。
+
+Stage 3 的 `best_bridge.pt` 不再按 Reference Bridge 的 ROUGE 主选。每轮在同一组固定开发样本上进行自回归生成，由百炼 Judge 从忠实性、推理连贯性和目标一致性三个维度做绝对评分；Bridge 结构有效率和严重错误率是硬门槛，ROUGE-L 只在绝对分数完全相同时作为次级比较。DPO 的 chosen Bridge 也必须通过三维绝对质量门槛，否则重新采样，达到次数上限后放弃该样本。
 
 所有阶段参数、学习率、epoch、loss 权重及 generated/reference bridge 混合比例均在 YAML 中配置。
 
 ## 7. 测试
 
-训练完成后：
+训练完成后可分别评估两个语义不同的 checkpoint：
 
 ```bash
 python scripts/evaluate.py \
   --config configs/twitter2015.yaml \
-  --checkpoint outputs/twitter2015/best_joint.pt
+  --checkpoint outputs/twitter2015/best_joint.pt \
+  --result-tag best_joint \
+  --also-write-canonical
+
+python scripts/evaluate.py \
+  --config configs/twitter2015.yaml \
+  --checkpoint outputs/twitter2015/stage5_generated_only.pt \
+  --result-tag generated_only
+
+python scripts/compare_checkpoint_evaluations.py \
+  --output-dir outputs/twitter2015
 ```
 
 输出：
@@ -362,6 +477,9 @@ python scripts/evaluate.py \
 ```text
 outputs/twitter2015/test_metrics.json
 outputs/twitter2015/test_predictions.json
+outputs/twitter2015/test_metrics_best_joint.json
+outputs/twitter2015/test_metrics_generated_only.json
+outputs/twitter2015/test_checkpoint_comparison.json
 ```
 
 指标自动分成：
@@ -378,7 +496,7 @@ outputs/twitter2015/test_predictions.json
 restored_text + image + target
 ```
 
-不会把 gold `text_evidence`、`visual_evidence`、`reasoning_tags` 或 `reasoning_bridge` 输入模型推理路径。证据表示和 reasoning tags 都由模型预测。
+数据中不存在 gold `text_evidence` 或 `visual_evidence`；推理也不会把 gold `reasoning_tags` 或 `reasoning_bridge` 输入模型路径。模态选择权重和 reasoning tags 都由模型预测。
 
 ## 8. 单样本推理
 
@@ -426,18 +544,22 @@ python scripts/evaluate.py --config configs/twitter2017.yaml
 本版本额外固定以下实验约束：
 
 - `reasoning_tags` 三个字段必须是真正 JSON boolean，字符串 `"false"` 不会被错误转换成 `True`。
-- `text_evidence` 保留原始内部空格并按 `restored_text` 精确连续子串检查；若证据在 `max_text_length` 截断后完全不可见，则该样本的 text-evidence token loss 会被忽略，而不是错误地作为“全负样本”训练。
-- `visual_evidence` 文本只在需要计算视觉证据对比损失时编码；正常 dev/test sentiment 推理显式关闭这一监督分支。
+- 数据 schema 明确拒绝旧 `text_evidence`、`visual_evidence` 字段，人工 Evidence 不参与训练、验证或推理。
+- TargetAwareTextSelector 与 TargetAwareVisualSelector 保留模态内容选择能力；它们是潜在模块，不宣称输出具有唯一 gold rationale。
+- reasoning tag head 只读取文本选择、视觉选择及其差异/交互表示，不保留可绕过选择器的 `H_f` 直连，保证 tag loss 必须经过选择器。
+- 选择器正则只防止选择比例/注意力熵坍缩，内容语义主要由 reasoning tags 与 teacher-forced Bridge loss监督。
 - `routing_gold_mix=0` 时不会把 gold reasoning tags 传入 Soft Router。
 - reference bridge 使用字段感知截断，始终保留 `[GROUND]`、`[TRANSITION]`、`[IMPLICATION]` 三个结构标记。
 - 自回归 bridge 生成带有结构顺序约束，只约束 marker 顺序，不决定字段语义或 sentiment。
 - Stage 5 的 generated bridge 通过 `no_grad` 离散生成；`L_sentiment` 不被错误描述为可穿过 argmax token 反传到 Bridge Generator。
 - Stage 5 生成 Bridge 时临时切换到 eval 模式，避免 Dropout 造成训练生成分布与开发/测试生成分布不一致。
-- Bridge 自回归解码使用 T5 KV cache；五个 memory token 加入可学习类型嵌入，以区分 reasoning/relation/text-evidence/visual-evidence/target。
-- 视觉证据损失带 presence 监督与跨 batch 负样本队列，因此单卡 batch size 为 1 时对比学习也不会退化成恒零损失。
-- sentiment、reasoning tags 与文本 evidence 分别启用类别重加权/焦点损失，降低长尾标签对训练的影响。
+- Bridge 自回归解码使用 T5 KV cache；四个 memory token 加入可学习类型嵌入，以区分 reasoning/text-selected/visual-selected/target。
+- sentiment 使用有效样本数（默认 `beta=0.999`）计算类别权重，按训练分布将期望权重归一化为 1，并采用逐样本加权以确保 `batch_size=1` 时权重不会被加权均值抵消；reasoning tags 启用正类重加权。
 - 文本、图像和目标先各自池化，再由三路门控融合，避免 CLIP patch token 较多导致图像模态天然占优。
 - 每个训练阶段每轮保存独立 JSON loss 日志，便于论文绘制训练曲线和排查 loss 比例。
+- T5/CLIP 预训练基座全程冻结；T5 只在 `q/v` 注意力投影训练 rank-8 LoRA，Stage 5 不允许全参数解冻。
+- Bridge-only 分类器从 T5 复制的 token embedding 全程冻结，只训练其 Bridge 编码器与分类头。
+- checkpoint 只保存 LoRA 与项目任务模块；恢复时先从固定 revision 加载 T5/CLIP，再严格加载轻量训练状态。
 
 ### Bridge 自动评价
 
@@ -460,14 +582,15 @@ python scripts/evaluate.py --config configs/twitter2015.yaml --bertscore
 python scripts/evaluate_bridge.py --config configs/twitter2015.yaml --bertscore
 ```
 
-### LLM Judge（只用于训练完成后的离线辅助评价）
+### LLM Judge（独立的训练后离线辅助评价）
 
-LLM Judge **不在训练 batch 内调用，也不作为可反向传播 loss**。默认 gold-blind：只读取 `restored_text + target + verified evidence + generated bridge`，不把 gold sentiment 提供给 Judge。
+该旧脚本与 Stage-3 成对裁判是两个独立入口。离线脚本不作为可反向传播
+loss，默认 gold-blind：只读取 `restored_text + target + generated bridge`，
+不把 gold sentiment 提供给 Judge。它同样从上面的 Git-ignored 本地代码文件
+读取 API Key，不使用环境变量。
 
 ```bash
 pip install -r requirements-eval.txt
-export LLM_JUDGE_API_KEY="..."
-export LLM_JUDGE_BASE_URL="你的 OpenAI-compatible base URL"
 python scripts/llm_judge_bridge.py \
   --config configs/twitter2015.yaml \
   --model YOUR_JUDGE_MODEL
@@ -483,7 +606,7 @@ python scripts/evaluate_auxiliary.py \
   --checkpoint outputs/twitter2015/best_joint.pt
 ```
 
-输出 text-evidence token F1、3 个 reasoning-tag 指标、视觉证据正样本 cosine 以及 implicit/non-implicit 子集平均路由权重。该脚本显式使用 gold 辅助标注作为“评价目标”，与最终 sentiment 的 clean inference 分开执行。
+输出 3 个 reasoning-tag 指标、文本平均选择比例、视觉注意力归一化熵/top-1 质量、选择器坍缩率，以及 implicit/non-implicit、cross/non-cross 子集平均路由权重。选择器指标只用于检查坍缩，不代表存在唯一正确的 Evidence 答案。
 
 ### 无需下载预训练模型的代码检查
 
@@ -503,7 +626,7 @@ python scripts/audit_architecture.py
 Linux 服务器安装依赖并手动放置数据后，可运行：
 
 ```bash
-NPROC_PER_NODE=4 bash scripts/run_server_pipeline.sh \
+NPROC_PER_NODE=1 bash scripts/run_server_pipeline.sh \
   configs/twitter2015.yaml \
   twitter2015-run-001
 ```
@@ -519,7 +642,7 @@ reports/<dataset>/<run-id>/         # 轻量可审计报告，提交 Git
 
 ```bash
 RESUME_CHECKPOINT=outputs/twitter2015/runs/twitter2015-run-001/latest.pt \
-NPROC_PER_NODE=4 \
+NPROC_PER_NODE=1 \
 bash scripts/run_server_pipeline.sh configs/twitter2015.yaml twitter2015-run-001
 ```
 

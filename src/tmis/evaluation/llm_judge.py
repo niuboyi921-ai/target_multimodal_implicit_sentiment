@@ -10,14 +10,12 @@ You are evaluating a generated target-level reasoning bridge for multimodal sent
 You receive ONLY:
 - restored_text
 - target
-- verified text_evidence
-- verified visual_evidence (already represented as text)
 - generated reasoning_bridge
 
 Do not infer or use any hidden dataset sentiment label. Judge whether the generated bridge is a faithful, target-specific semantic transformation of the supplied information.
 
 Score each dimension from 1 to 5:
-1. evidence_faithfulness: substantive claims are supported by restored_text/evidence; no invented facts.
+1. evidence_faithfulness: textual claims are supported by restored_text and unsupported details are not invented. Because no artificial visual-evidence annotation is supplied, do not claim to verify image-specific details.
 2. target_ownership: properties, consequences, and evaluation belong to the CURRENT target.
 3. reasoning_coherence: grounded_synthesis -> reasoning_transition -> evaluative_implication is logically connected.
 4. field_role_separation: synthesis states grounded semantic state; transition explains the transformation; implication states final target-level evaluation/presentation.

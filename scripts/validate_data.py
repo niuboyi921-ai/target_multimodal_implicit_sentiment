@@ -51,8 +51,8 @@ def validate_split(cfg, split: str):
             counts[f"sentiment/{r.sentiment}"] += 1
             counts["implicit" if r.is_implicit else "non_implicit"] += 1
             counts["has_bridge" if r.reasoning_bridge else "missing_bridge"] += 1
-            counts["has_text_evidence" if r.text_evidence else "empty_text_evidence"] += 1
-            counts["has_visual_evidence" if r.visual_evidence else "empty_visual_evidence"] += 1
+            for tag_name, enabled in r.reasoning_tags.items():
+                counts[f"reasoning_tag/{tag_name}/{str(enabled).lower()}"] += 1
 
             image_path = resolve_image(image_dir, r.image, d["image_extensions"])
             if image_path is None:
@@ -63,10 +63,6 @@ def validate_split(cfg, split: str):
                         im.verify()
                 except Exception as exc:
                     errors.append(f"{split}[{i}] image cannot be decoded: {r.image}: {exc}")
-
-            for ev in r.text_evidence:
-                if ev not in r.restored_text:
-                    errors.append(f"{split}[{i}] text_evidence is not exact substring: {ev!r}")
 
             if r.reasoning_bridge:
                 ei = r.reasoning_bridge["evaluative_implication"]

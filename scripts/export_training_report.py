@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from tmis.config import load_config, resolve_project_path
+from tmis.training.provenance import summarize_training_judge
 from tmis.utils import collect_environment, collect_git_state, write_json
 
 
@@ -72,16 +73,30 @@ def summarize_dataset(cfg: dict[str, Any]) -> dict[str, Any]:
         records = records_from_json(path)
         sentiment = Counter(str(record.get("sentiment", "")).lower() for record in records)
         implicit = sum(
-            bool((record.get("reasoning_tags") or {}).get("implicit_reasoning_required"))
+            bool((record.get("reasoning_tags") or {}).get("implicit_sentiment_present"))
             for record in records
         )
+        tag_counts = {
+            name: sum(
+                bool((record.get("reasoning_tags") or {}).get(name))
+                for record in records
+            )
+            for name in (
+                "explicit_cue_present",
+                "implicit_sentiment_present",
+                "cross_modal_reasoning_required",
+            )
+        }
         summary["splits"][split] = {
             "records": len(records),
             "sentiment": dict(sorted(sentiment.items())),
             "implicit": implicit,
             "non_implicit": len(records) - implicit,
-            "has_text_evidence": sum(bool(record.get("text_evidence")) for record in records),
-            "has_visual_evidence": sum(bool(record.get("visual_evidence")) for record in records),
+            "reasoning_tag_positive_counts": tag_counts,
+            "artificial_evidence_fields_present": sum(
+                "text_evidence" in record or "visual_evidence" in record
+                for record in records
+            ),
             "has_reasoning_bridge": sum(record.get("reasoning_bridge") is not None for record in records),
         }
 
@@ -131,6 +146,43 @@ def create_learning_curves(artifact_dir: Path, destination: Path) -> int:
         }
         for name, value in (payload.get("mean_losses") or {}).items():
             row[f"loss_{name}"] = value
+        parameter_summary = payload.get("parameter_summary") or {}
+        for name in (
+            "total_parameters",
+            "trainable_parameters",
+            "trainable_ratio",
+            "trainable_lora_parameters",
+            "trainable_task_parameters",
+            "trainable_t5_base_parameters",
+            "trainable_clip_parameters",
+            "trainable_bridge_token_embedding_parameters",
+        ):
+            if name in parameter_summary:
+                row[name] = parameter_summary[name]
+        feedback = payload.get("ai_feedback") or {}
+        collection = feedback.get("collection") or {}
+        dpo = feedback.get("dpo") or {}
+        row.update(
+            {
+                "judge_sampled_records": collection.get("sampled_records"),
+                "judge_preference_pairs": collection.get("preference_pairs"),
+                "judge_reviewed_pairs": collection.get("reviewed_pairs"),
+                "judge_tied_pairs": collection.get("tied_pairs"),
+                "judge_quality_rejected_pairs": collection.get(
+                    "quality_rejected_pairs"
+                ),
+                "judge_resampled_records": collection.get("resampled_records"),
+                "judge_exhausted_records": collection.get("exhausted_records"),
+                "judge_api_calls": (collection.get("judge_usage") or {}).get(
+                    "api_calls"
+                ),
+                "judge_cache_hits": (collection.get("judge_usage") or {}).get(
+                    "cache_hits"
+                ),
+            }
+        )
+        for name, value in (dpo.get("mean_losses") or {}).items():
+            row[f"loss_ai_{name}"] = value
         rows.append(row)
     fields = [
         "stage",
@@ -140,6 +192,22 @@ def create_learning_curves(artifact_dir: Path, destination: Path) -> int:
         "trainable_parameters",
         "mixed_precision",
         "optimizer",
+        "total_parameters",
+        "trainable_ratio",
+        "trainable_lora_parameters",
+        "trainable_task_parameters",
+        "trainable_t5_base_parameters",
+        "trainable_clip_parameters",
+        "trainable_bridge_token_embedding_parameters",
+        "judge_sampled_records",
+        "judge_preference_pairs",
+        "judge_reviewed_pairs",
+        "judge_tied_pairs",
+        "judge_quality_rejected_pairs",
+        "judge_resampled_records",
+        "judge_exhausted_records",
+        "judge_api_calls",
+        "judge_cache_hits",
         *sorted({key for row in rows for key in row if key.startswith("loss_")}),
     ]
     with destination.open("w", encoding="utf-8", newline="") as stream:
@@ -323,6 +391,7 @@ def main() -> None:
         "copied_output_artifact_count": len(copied),
         "epoch_summary_count": curve_count,
         "error": run_state.get("error"),
+        "training_judge": summarize_training_judge(output_dir, cfg),
     }
     summary_path = report_dir / "RUN_SUMMARY.md"
     summary_path.write_text(markdown_summary(manifest, curve_rows), encoding="utf-8")
