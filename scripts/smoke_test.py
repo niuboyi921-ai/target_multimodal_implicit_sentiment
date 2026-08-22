@@ -44,6 +44,7 @@ from tmis.training.trainer import (
     bridge_selection_score,
     effective_number_class_weights,
     linear_schedule,
+    restore_optional_metric,
     stage3_checkpoint_decision,
     stage5_checkpoint_decision,
 )
@@ -151,6 +152,12 @@ def main():
     # Four Stage-5 epochs add a final generated-only adaptation epoch.
     ratios = [linear_schedule(0.25, 1.0, epoch, 4) for epoch in range(4)]
     assert ratios == [0.25, 0.5, 0.75, 1.0]
+
+    # Stages before Bridge validation legitimately serialize unavailable
+    # selection metrics as null; restoring such a checkpoint must not call
+    # float(None) or prevent Stage 3 from selecting its first valid epoch.
+    assert restore_optional_metric(None) == -float("inf")
+    assert restore_optional_metric(0.42) == 0.42
 
     # Native LoRA must preserve the frozen layer's initial output and expose
     # trainable low-rank matrices without modifying the base weights.

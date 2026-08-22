@@ -68,6 +68,11 @@ def linear_schedule(start: float, end: float, epoch: int, epochs: int) -> float:
     return float(start + (end - start) * t)
 
 
+def restore_optional_metric(value: Any, default: float = -math.inf) -> float:
+    """Restore a checkpoint metric that is serialized as null before it exists."""
+    return float(default) if value is None else float(value)
+
+
 def effective_number_class_weights(
     counts: torch.Tensor,
     beta: float = 0.999,
@@ -1029,14 +1034,11 @@ class StageTrainer:
             self.best_implicit_macro_f1 = float(
                 resume_meta.get("best_implicit_macro_f1", -1.0)
             )
-            saved_bridge_score = resume_meta.get("best_bridge_score")
-            self.best_bridge_score = (
-                float(saved_bridge_score)
-                if saved_bridge_score is not None
-                else -math.inf
+            self.best_bridge_score = restore_optional_metric(
+                resume_meta.get("best_bridge_score")
             )
-            self.best_bridge_tiebreak = float(
-                resume_meta.get("best_bridge_tiebreak", -math.inf)
+            self.best_bridge_tiebreak = restore_optional_metric(
+                resume_meta.get("best_bridge_tiebreak")
             )
             saved_world_size = resume_meta.get("world_size")
             if (
